@@ -1,0 +1,3 @@
+name=Chromatic Pour
+launch=index.html
+server=server.js
