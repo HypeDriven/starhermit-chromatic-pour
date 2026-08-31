@@ -40,6 +40,7 @@ const MIME = {
   '.md': 'text/plain; charset=utf-8',
   '.png': 'image/png',
   '.svg': 'image/svg+xml',
+  '.opus': 'audio/ogg',
   '.woff2': 'font/woff2',
   '.ico': 'image/x-icon',
 };

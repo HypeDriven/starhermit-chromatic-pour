@@ -1,5 +1,7 @@
-// audio.js — fully procedural WebAudio: zero assets, lazy AudioContext,
-// bused gains, seeded pitch variants (audioStream) so replays sound identical.
+// audio.js — WebAudio engine: procedural music/ambience/synthesis with authored
+// sample one-shots (sfx/manifest.json + sfx/<name>.opus) preferred per event
+// once loaded; synthesis remains the fallback. Lazy AudioContext, bused gains,
+// seeded pitch variants (audioStream) so replays sound identical.
 // Browser-only; if WebAudio is unavailable every export degrades to a no-op.
 
 import { audioStream, hashSeed } from './rng.js';
@@ -189,6 +191,65 @@ export function createAudio(settings = {}, { audioSeed = 'default' } = {}) {
     },
   };
 
+  // ---------------------------------------------------------------- sample sfx
+  // Authored one-shots (sfx/manifest.json + sfx/<name>.opus) take priority
+  // over the synthesized fallbacks above once fetched and decoded. Loading
+  // starts only after unlock() (user gesture); any failure keeps synthesis.
+
+  const sampleBuffers = new Map();   // basename -> AudioBuffer
+  const sampleLoads = new Map();     // basename -> in-flight Promise (dedupe)
+  const sampleFailed = new Set();    // basename -> never retry
+  let eventSamples = null;           // event name -> clip basename
+  let manifestRequested = false;
+
+  async function loadManifest() {
+    try {
+      const res = await fetch('sfx/manifest.json');
+      if (!res.ok) return;
+      const list = await res.json();
+      if (!Array.isArray(list)) return;
+      const map = {};
+      for (const item of list) {
+        if (item && typeof item.name === 'string' && typeof item.event === 'string' &&
+            SOUNDS[item.event] && !(item.event in map)) {
+          map[item.event] = item.name;
+        }
+      }
+      eventSamples = map;
+    } catch { /* no manifest -> synthesis only */ }
+  }
+
+  function requestSample(name) {
+    if (sampleBuffers.has(name) || sampleFailed.has(name) || sampleLoads.has(name)) return;
+    const p = (async () => {
+      try {
+        const res = await fetch(`sfx/${name}.opus`);
+        if (!res.ok) throw new Error('missing sample');
+        sampleBuffers.set(name, await ctx.decodeAudioData(await res.arrayBuffer()));
+      } catch {
+        sampleFailed.add(name);
+      } finally {
+        sampleLoads.delete(name);
+      }
+    })();
+    sampleLoads.set(name, p);
+  }
+
+  function playSample(name, pitch) {
+    const buf = sampleBuffers.get(name);
+    if (!buf) return false;
+    try {
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.playbackRate.value = pitch;
+      src.connect(buses.effects);
+      src.onended = () => { try { src.disconnect(); } catch { /* gone */ } };
+      src.start();
+      return true;
+    } catch { /* fall through to synthesis */ }
+    return false;
+  }
+
   // ---------------------------------------------------------------- ambience
 
   function buildAmbience(family) {
@@ -304,6 +365,10 @@ export function createAudio(settings = {}, { audioSeed = 'default' } = {}) {
         buses[name] = g;
       }
       noiseBuf = makeNoiseBuffer();
+      if (!manifestRequested) {
+        manifestRequested = true;
+        loadManifest();
+      }
       startMusic();
       if (pendingTheme != null) {
         const theme = pendingTheme;
@@ -331,8 +396,15 @@ export function createAudio(settings = {}, { audioSeed = 'default' } = {}) {
       if (!fn) return;
       // seeded variant so a replayed session produces identical audio
       const variant = 1 + (rng.next() - 0.5) * 0.08;
+      const p = (typeof pitch === 'number' && pitch > 0 ? pitch : 1) * variant;
+      // Prefer the authored sample; synthesize only while it loads or if it failed.
+      const clip = eventSamples && eventSamples[name];
+      if (clip) {
+        requestSample(clip);
+        if (playSample(clip, p)) return;
+      }
       try {
-        fn((typeof pitch === 'number' && pitch > 0 ? pitch : 1) * variant);
+        fn(p);
       } catch { /* a failed one-shot must never break the game */ }
     },
 
@@ -375,6 +447,11 @@ export function createAudio(settings = {}, { audioSeed = 'default' } = {}) {
     dispose() {
       disposed = true;
       if (musicTimer) { clearInterval(musicTimer); musicTimer = null; }
+      sampleBuffers.clear();
+      sampleLoads.clear();
+      sampleFailed.clear();
+      eventSamples = null;
+      manifestRequested = false;
       if (ctx) {
         killAmbience(ambienceState, 0.05);
         ambienceState = null;

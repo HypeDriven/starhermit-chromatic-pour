@@ -1,0 +1,74 @@
+[
+  {
+    "name": "select",
+    "seconds": 1,
+    "prompt": "A small glass vial being lifted off a wooden shelf, brief delicate clink.",
+    "event": "select"
+  },
+  {
+    "name": "deselect",
+    "seconds": 1,
+    "prompt": "A small glass vial being set back down gently on a wooden shelf, soft muted clink.",
+    "event": "deselect"
+  },
+  {
+    "name": "pour-start",
+    "seconds": 2,
+    "prompt": "Liquid beginning to pour from one glass vessel into another, rising watery glug.",
+    "event": "pour-start"
+  },
+  {
+    "name": "pour-end",
+    "seconds": 1,
+    "prompt": "The last drops of liquid trickling into a glass vessel with a soft splash.",
+    "event": "pour-end"
+  },
+  {
+    "name": "invalid",
+    "seconds": 1,
+    "prompt": "A dull wooden thunk, a knuckle tapping a corked flask once.",
+    "event": "invalid"
+  },
+  {
+    "name": "layer-complete",
+    "seconds": 2,
+    "prompt": "A bright crystal chime with a short shimmering resonance, a small spell completing.",
+    "event": "layer-complete"
+  },
+  {
+    "name": "win",
+    "seconds": 3,
+    "prompt": "A short celebratory sparkle of small bells and chimes rising together, magical triumph.",
+    "event": "win"
+  },
+  {
+    "name": "fail",
+    "seconds": 2,
+    "prompt": "A soft descending two-note droop on a wooden marimba, gentle disappointment.",
+    "event": "fail"
+  },
+  {
+    "name": "undo",
+    "seconds": 1,
+    "prompt": "A quick reversed whoosh of air, like a book page being flipped backward.",
+    "event": "undo"
+  },
+  {
+    "name": "ui",
+    "seconds": 1,
+    "prompt": "A very short soft interface tick, a fingertip tap on polished wood.",
+    "event": "ui"
+  },
+  {
+    "name": "hint",
+    "seconds": 1,
+    "prompt": "Two delicate glass-bell pings chiming softly, a gentle idea arriving.",
+    "event": "hint"
+  },
+  {
+    "name": "tick",
+    "seconds": 1,
+    "prompt": "A single short clockwork tick, a small wooden metronome click.",
+    "event": "tick"
+  }
+]
