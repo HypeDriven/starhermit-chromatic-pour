@@ -197,6 +197,9 @@ export function nextCommandId(prefix = 'cmd') {
 
 export function applyCommand(state, cmd) {
   if (!cmd || typeof cmd !== 'object') return { error: { reason: INVALID.OUT_OF_RANGE, message: 'Malformed command.' } };
+  if (typeof cmd.id !== 'string' || cmd.id.length === 0) {
+    return { error: { reason: INVALID.OUT_OF_RANGE, message: 'Malformed command: missing id.' } };
+  }
   const dupIdx = state.appliedCommandIds.indexOf(cmd.id);
   if (dupIdx !== -1) return { state, events: [], duplicate: true };
   if (cmd.type !== 'pour') return { error: { reason: INVALID.OUT_OF_RANGE, message: `Unknown command type: ${cmd.type}` } };
@@ -204,6 +207,25 @@ export function applyCommand(state, cmd) {
   if (!check.ok) {
     return { error: { reason: check.reason, message: INVALID_MESSAGES[check.reason] } };
   }
+  // Elapsed time is authoritative and must only ever move forward. Clamp any
+  // client-supplied value that would go backwards (a decreasing claim is
+  // forged), so scoring/ranking can never be gamed by rewind.
+  const requested = Number.isFinite(cmd.elapsedMs) ? Math.max(0, Math.floor(cmd.elapsedMs)) : state.elapsedMs;
+  const elapsedMs = Math.max(state.elapsedMs, requested);
+
+  // The move budget is checked *before* the pour is applied, so a budget of N
+  // permits exactly N moves: the N+1th legal pour is never written to the
+  // board. The round ends with the constraint failure and moves still at N.
+  if (state.constraints.moveLimit && state.moves + 1 > state.constraints.moveLimit) {
+    const next = {
+      ...state,
+      elapsedMs,
+      status: 'failed',
+      terminalReason: TERMINAL.MOVE_LIMIT,
+    };
+    return { state: next, events: [{ type: 'failed', reason: TERMINAL.MOVE_LIMIT }] };
+  }
+
   const vessels = state.vessels.map((v) => v.slice());
   const src = vessels[cmd.from];
   const dst = vessels[cmd.to];
@@ -212,16 +234,11 @@ export function applyCommand(state, cmd) {
   let status = 'active';
   let terminalReason = null;
   const events = [{ type: 'pour', from: cmd.from, to: cmd.to, color: check.color, layers: check.layers }];
-  const elapsedMs = Number.isFinite(cmd.elapsedMs) ? Math.max(0, Math.floor(cmd.elapsedMs)) : state.elapsedMs;
 
   if (vesselsSolved(vessels, state.capacity)) {
     status = 'complete';
     terminalReason = TERMINAL.ALL_UNIFORM;
     events.push({ type: 'complete' });
-  } else if (state.constraints.moveLimit && state.moves + 1 > state.constraints.moveLimit) {
-    status = 'failed';
-    terminalReason = TERMINAL.MOVE_LIMIT;
-    events.push({ type: 'failed', reason: terminalReason });
   } else if (state.constraints.timeLimitMs && elapsedMs >= state.constraints.timeLimitMs) {
     status = 'failed';
     terminalReason = TERMINAL.TIME_LIMIT;
@@ -301,7 +318,12 @@ export function deserialize(json) {
     if (typeof data.version !== 'number' || data.version > RULES_VERSION) {
       throw new Error(`Unsupported rules state version: ${data.version}`);
     }
-    data.version = RULES_VERSION;
+    // Never mutate a caller-owned object; a JSON.round-trip is safe to edit.
+    if (typeof json === 'string') {
+      data.version = RULES_VERSION;
+      return data;
+    }
+    return { ...data, version: RULES_VERSION };
   }
   return data;
 }

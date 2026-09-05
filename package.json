@@ -5,8 +5,12 @@
   "type": "module",
   "scripts": {
     "test": "node tests/run-tests.js",
+    "test:e2e": "node tests/e2e.mjs",
     "start": "node server.js",
     "check": "node tools/check-all.js"
   },
-  "license": "UNLICENSED"
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "playwright-core": "^1.62.1"
+  }
 }

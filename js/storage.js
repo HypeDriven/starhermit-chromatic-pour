@@ -125,6 +125,10 @@ export function checksumDoc(obj) {
 export function verifyDoc(doc) {
   if (!isPlainObject(doc) || typeof doc.checksum !== 'string') return null;
   if (doc.version !== SAVE_VERSION) return null;
+  // A doc with a checksum but no data payload cannot be verified; return null
+  // like every other unverifiable doc rather than letting canonical(undefined)
+  // produce a non-string that makes fnv1a throw.
+  if (!Object.hasOwn(doc, 'data') || doc.data === undefined) return null;
   return fnv1a(canonical(doc.data)) === doc.checksum ? doc.data : null;
 }
 

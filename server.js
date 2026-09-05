@@ -235,6 +235,14 @@ function dailyParams(levelId) {
   };
 }
 
+// The server owns the clock: only today's UTC daily is "published" and may be
+// submitted. Any past or future daily (a board that has already been or has
+// not yet been published) is rejected so no player can pre-solve a board that
+// is not live, or re-rank an old daily.
+function todayUtcDay() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 // parMoves per board, derived by solving once (cached per date). Uses
 // content.parFor so the server's par formula (depth + 25% slack) exactly
 // matches what the client scored against.
@@ -321,6 +329,9 @@ function validateScoreBody(body) {
 function verifyReplay(entry, claimedScore) {
   const params = dailyParams(entry.levelId);
   if (!params) throw new ApiError(422, { error: 'unsupported-level' });
+  if (params.id !== `daily-${todayUtcDay()}`) {
+    throw new ApiError(422, { error: 'board-not-current' });
+  }
   if (entry.seed !== params.seed || entry.replay.seed !== params.seed) {
     throw new ApiError(422, { error: 'seed-mismatch' });
   }
@@ -336,11 +347,18 @@ function verifyReplay(entry, claimedScore) {
     throw new ApiError(422, { error: 'hash-mismatch' });
   }
 
+  // The server owns the clock: elapsed time is cumulative and must be
+  // monotonic. A claim that moves backwards is forged and is rejected.
+  let lastElapsed = -1;
   for (let i = 0; i < entry.replay.commands.length; i++) {
     const cmd = entry.replay.commands[i];
     if (!cmd || (cmd.type !== 'pour' && cmd.type !== 'invalid') || !isInt(cmd.from) || !isInt(cmd.to) ||
         (cmd.elapsedMs !== undefined && !inRange(cmd.elapsedMs, 0, DAY_MS))) {
       throw new ApiError(422, { error: 'invalid-replay' });
+    }
+    if (cmd.elapsedMs !== undefined) {
+      if (cmd.elapsedMs < lastElapsed) throw new ApiError(422, { error: 'invalid-replay' });
+      lastElapsed = cmd.elapsedMs;
     }
     if (cmd.type === 'invalid') {
       // Recorded invalid attempts: hashState covers invalidActions, so they
@@ -366,6 +384,11 @@ function verifyReplay(entry, claimedScore) {
     throw new ApiError(422, { error: 'hash-mismatch' });
   }
   if (state.status !== 'complete') throw new ApiError(422, { error: 'not-complete' });
+  // The server owns the clock: a completed round cannot have taken zero real
+  // time. Combined with the monotonicity check above (a claim that moves
+  // backwards is forged), this rejects a replay that simply reports 0ms on
+  // every command to claim the full time bonus.
+  if (state.elapsedMs <= 0) throw new ApiError(422, { error: 'invalid-replay', reason: 'elapsed-forged' });
 
   const result = entry.result;
   const recomputed = rules.scoreState(state, parMovesFor(params));
