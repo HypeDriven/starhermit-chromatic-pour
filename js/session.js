@@ -160,6 +160,30 @@ export class GameSession {
     return this._state;
   }
 
+  /**
+   * Fail the round when a time limit elapses between pours. Rules enforce the
+   * limit when a pour lands; this covers a player who simply stops playing.
+   * Returns true when the round was failed by this call.
+   */
+  checkTimeout() {
+    const s = this._state;
+    if (!s || s.status !== 'active') return false;
+    const limit = s.constraints?.timeLimitMs;
+    if (!limit) return false;
+    const elapsed = this.elapsedMs();
+    if (elapsed < limit) return false;
+    this.pause();
+    this._state = {
+      ...s,
+      elapsedMs: this._accumMs,
+      status: 'failed',
+      terminalReason: rules.TERMINAL.TIME_LIMIT,
+    };
+    this._commands.push({ id: `${this.sessionId}:${++this._cmdSeq}`, type: 'timeout', elapsedMs: this._accumMs });
+    this._stateHashes.push({ turn: this._state.turn, hash: rules.hashState(this._state) });
+    return true;
+  }
+
   hint() {
     if (!this._state || this._state.status !== 'active') return null;
     const h = rules.hint(this._state);

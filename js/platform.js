@@ -164,9 +164,17 @@ export async function initPlatform(opts = {}) {
   }
 
   async function submitScore(board, entry) {
-    // Always mirror locally when it beats the stored best.
+    // Always mirror locally when it beats the stored best — a slim record only;
+    // the replay envelope stays in the replay archive, not the bests map.
     let localAccepted = false;
-    try { localAccepted = saveBestScore(board, entry); } catch { /* storage full */ }
+    try {
+      const r = entry?.result && typeof entry.result === 'object' ? entry.result : entry || {};
+      localAccepted = saveBestScore(board, {
+        score: r.score ?? 0,
+        moves: r.moves ?? null,
+        ms: r.elapsedMs ?? r.ms ?? null,
+      });
+    } catch { /* storage full */ }
 
     if (!hosted) return { accepted: true, local: true };
     try {
@@ -214,7 +222,8 @@ export async function initPlatform(opts = {}) {
     try { consented = !!getConsent(); } catch { consented = false; }
     if (!consented || !hosted) return;
     if (telemetryQueue.length >= TELEMETRY_QUEUE_MAX) telemetryQueue.shift();
-    telemetryQueue.push({ event, data: sanitizeTelemetry(data), t: serverNow() });
+    // Server-side aggregate counts key on `type`; keep the wire field aligned.
+    telemetryQueue.push({ type: event, data: sanitizeTelemetry(data), t: serverNow() });
   }
 
   async function signIn() {
@@ -228,12 +237,24 @@ export async function initPlatform(opts = {}) {
     }
   }
 
+  // Durable achievement delivery; the server stores unlocks idempotently.
+  async function unlockAchievement(key) {
+    if (!hosted) return { error: 'offline' };
+    try {
+      const r = await apiFetch('/api/v1/achievements', { method: 'POST', body: { key } });
+      if (r.json && typeof r.json.error === 'string') return { error: r.json.error };
+      return { ok: true };
+    } catch {
+      return { error: 'unavailable' };
+    }
+  }
+
   const platform = {
     hosted, scope, profile,
     serverNow, syncTime,
     activityStart, activityEnd, heartbeat,
     submitScore, fetchLeaderboard,
-    telemetry, signIn,
+    telemetry, signIn, unlockAchievement,
   };
 
   if (hosted) {

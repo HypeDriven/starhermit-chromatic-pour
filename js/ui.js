@@ -541,6 +541,12 @@ export function createUI({ root, services }) {
 
   function openSetup(kind) {
     audio?.unlock();
+    // Reached mid-round (e.g. "Replay the lessons" from the help screen while
+    // paused): the state machine has no paused → mode-select edge, so abandon
+    // the old round cleanly first instead of getting stuck on the setup screen.
+    if (session && (currentState === 'active' || currentState === 'paused' || currentState === 'tutorial')) {
+      leaveRound();
+    }
     modeKind = kind;
     if (kind !== 'lesson') {
       settings.lastMode = kind;
@@ -717,10 +723,13 @@ export function createUI({ root, services }) {
   // -- Score chase ------------------------------------------------------------------
   function setupScoreChase(s) {
     setupHeader(s, 'Score chase', 'One board, endless rivalry. Boards marked daily rotate at UTC midnight; the evergreen board never changes.', true);
+    // Board keys are the level ids themselves — the authoritative API requires
+    // board === levelId and re-simulates the seeded board server-side.
+    const chaseDailySeed = `chase-${todayKey(platform.serverNow)}`;
     const boards = [
-      { key: `chase-daily-${todayKey(platform.serverNow)}`, scope: 'global', label: 'Global daily', seed: `chase-${todayKey(platform.serverNow)}` },
-      { key: 'global', scope: 'global', label: 'Global all-time', seed: 'chase-evergreen' },
-      { key: 'global', scope: 'friends', label: 'Friends', seed: 'chase-evergreen' },
+      { key: `practice-master-${chaseDailySeed}`, scope: 'global', label: 'Global daily', seed: chaseDailySeed },
+      { key: 'practice-master-chase-evergreen', scope: 'global', label: 'Global all-time', seed: 'chase-evergreen' },
+      { key: 'practice-master-chase-evergreen', scope: 'friends', label: 'Friends', seed: 'chase-evergreen' },
     ];
     const tableWrap = el('div', { class: 'cp-leaderboard' });
     const bestLine = el('p', { class: 'card-dim' });
@@ -1179,15 +1188,15 @@ export function createUI({ root, services }) {
   // -- selection / pour intent ----------------------------------------------
 
   let holdTimer = 0;
-  let holdFired = false;
 
   function onVesselActivate(i, evt) {
     if (inputLocked || !session || currentState === 'paused') return;
     if (settings.holdToConfirm && evt && evt.detail > 0) {
-      // Hold-to-confirm: a real pointer click commits only when it followed a
-      // deliberate press-and-hold; keyboard clicks (detail 0) pass through.
-      if (!holdFired) return;
-      holdFired = false;
+      // Hold-to-confirm: plain pointer clicks are ignored — the press-and-hold
+      // timer below commits the action instead. Keyboard clicks (detail 0)
+      // pass through. (The click that trails a completed hold is swallowed
+      // here too, so a hold can never select-then-deselect.)
+      return;
     }
     audio?.unlock();
     if (tutorial) {
@@ -1542,6 +1551,9 @@ export function createUI({ root, services }) {
     for (const key of record.newAchievements || []) {
       const meta = (storage.ACHIEVEMENTS || []).find((a) => a.key === key);
       toast(`Achievement unlocked: ${meta ? meta.name : key}`, 'achievement');
+      // Durable delivery to the host (idempotent server-side); local unlock
+      // already happened in recordResult.
+      try { platform.unlockAchievement?.(key)?.catch?.(() => {}); } catch { /* best-effort */ }
     }
 
     // Personal-best comparison (before this round is written).
@@ -1551,17 +1563,28 @@ export function createUI({ root, services }) {
     }
 
     // Ranked submission with the replay envelope for server-side validation.
+    // Only completed rounds are submitted: the authoritative API replays the
+    // command log and requires a terminal 'complete' state, so a failed round
+    // would be rejected (and would surface a misleading network error).
     let submission = null;
     if (ranked && boardKey) {
       try { storage.saveReplayEnvelope(env); } catch { /* replay archive is best-effort */ }
+    }
+    if (ranked && boardKey && result.complete) {
       const entry = {
-        score: result.score.total,
-        moves: result.moves,
-        ms: result.elapsedMs,
-        sessionId: result.sessionId,
+        levelId: levelDef.id,
         seed: levelDef.seed,
         contentVersion: levelDef.contentVersion ?? 1,
-        assists: result.assists,
+        name: platform.profile?.displayName || undefined,
+        sessionId: result.sessionId,
+        result: {
+          score: result.score.total,
+          moves: result.moves,
+          invalidActions: result.invalidActions,
+          elapsedMs: result.elapsedMs,
+          assists: result.assists,
+          sessionId: result.sessionId,
+        },
         replay: env,
       };
       try {
@@ -1574,7 +1597,7 @@ export function createUI({ root, services }) {
       } else if (submission && submission.error) {
         showError('network');
       }
-    } else if (boardKey) {
+    } else if (boardKey && result.complete) {
       // Unranked boards still track a local best for comparison.
       try {
         const prev = storage.loadBestScore(boardKey);
@@ -1992,6 +2015,8 @@ export function createUI({ root, services }) {
       version: 1, journey: {}, dailies: {}, achievements: {},
       mastery: { completed: [] }, sessionsPlayed: 0, lastStreakDay: null, streak: 0,
     });
+    // The dialog promised "bests on this device will be erased" — keep it true.
+    try { storage.clearLocalProgress(); } catch { /* best-effort */ }
     settings.tutorialDone = false;
     saveSettings(settings);
     buildTitleScreen();
@@ -2310,10 +2335,8 @@ export function createUI({ root, services }) {
     if (!settings.holdToConfirm) return;
     const btn = e.target.closest?.('.vessel');
     if (!btn) return;
-    holdFired = false;
     clearTimeout(holdTimer);
     holdTimer = setTimeout(() => {
-      holdFired = true;
       onVesselActivate(Number(btn.dataset.index));
     }, 320);
   });
@@ -2405,6 +2428,13 @@ export function createUI({ root, services }) {
     if (currentState === 'active' || currentState === 'tutorial') {
       updateTimer();
       pollGamepad(performance.now());
+    }
+    // A time limit binds even when the player stops pouring — fail the round
+    // the moment the clock runs out (a pour in flight enforces it in rules).
+    if (currentState === 'active' && !inputLocked && session && session.checkTimeout()) {
+      renderBoard();
+      updateHud();
+      endRound({ type: 'failed', reason: rules.TERMINAL.TIME_LIMIT });
     }
     if (!screens.title.hidden) tickDailyCountdown();
   }

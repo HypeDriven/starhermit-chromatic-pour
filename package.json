@@ -1,7 +1,7 @@
 {
   "name": "chromatic-pour",
   "version": "1.0.0",
-  "description": "Chromatic Pour — an alchemist's liquid-sorting puzzle. Browser distribution with deterministic rules engine.",
+  "description": "Chromatic Pour \u2014 an alchemist's liquid-sorting puzzle. Browser distribution with deterministic rules engine.",
   "type": "module",
   "scripts": {
     "test": "node tests/run-tests.js",
@@ -9,7 +9,7 @@
     "start": "node server.js",
     "check": "node tools/check-all.js"
   },
-  "license": "UNLICENSED",
+  "license": "SEE LICENSE IN LICENSE.md",
   "devDependencies": {
     "playwright-core": "^1.62.1"
   }

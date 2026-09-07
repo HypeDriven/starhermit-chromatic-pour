@@ -75,6 +75,7 @@ function offlinePlatform(note) {
     heartbeat: () => {},
     submitScore: async () => ({ error: note }),
     fetchLeaderboard: async () => ({ error: note }),
+    unlockAchievement: async () => ({ error: note }),
     telemetry: () => {},
     signIn: async () => {},
   };

@@ -11,8 +11,8 @@ import * as rules from './js/rules.js';
 import * as content from './js/content.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = path.join(ROOT, 'data');
-const PORT = Number(process.env.PORT) || 8080;
+const DATA_DIR = process.env.CP_DATA_DIR || path.join(ROOT, 'data');
+const PORT = process.env.PORT === undefined ? 8080 : Number(process.env.PORT);
 
 const CONTENT_VERSION = 1;
 const MAX_BODY_BYTES = 256 * 1024;
@@ -46,7 +46,13 @@ const MIME = {
 };
 
 function serveStatic(req, res, pathname) {
-  let rel = decodeURIComponent(pathname);
+  let rel;
+  try {
+    rel = decodeURIComponent(pathname);
+  } catch {
+    // Malformed percent-encoding is a client error, not a server fault.
+    return sendJson(res, 400, { error: 'bad-path' });
+  }
   if (rel === '/') rel = '/index.html';
   const filePath = path.resolve(ROOT, '.' + rel);
   if (filePath !== ROOT && !filePath.startsWith(ROOT + path.sep)) {
@@ -243,6 +249,34 @@ function todayUtcDay() {
   return new Date().toISOString().slice(0, 10);
 }
 
+// Boards the authoritative API will re-simulate. Every accepted board must be
+// rebuildable server-side from its level id alone:
+//  - daily-YYYY-MM-DD   (today only; past/future dailies are rejected)
+//  - authored challenges (fixed seeds + constraints in content.js)
+//  - score-chase boards  (practice-master-chase-<date|evergreen>, fixed recipe)
+// Anything else is unsupported, so no client can submit a self-invented board.
+function verifiableParams(levelId) {
+  const id = String(levelId);
+  const daily = dailyParams(id);
+  if (daily) {
+    if (daily.id !== `daily-${todayUtcDay()}`) {
+      throw new ApiError(422, { error: 'board-not-current' });
+    }
+    return daily;
+  }
+  const authored = content.getLevelById(id);
+  if (authored && authored.kind === 'challenge') return authored;
+  const chase = /^practice-master-(chase-(?:\d{4}-\d{2}-\d{2}|evergreen))$/.exec(id);
+  if (chase) {
+    try {
+      return content.practiceLevel('master', chase[1]);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 // parMoves per board, derived by solving once (cached per date). Uses
 // content.parFor so the server's par formula (depth + 25% slack) exactly
 // matches what the client scored against.
@@ -327,11 +361,8 @@ function validateScoreBody(body) {
 
 // Re-simulate the replay through the rules engine and verify hashes + score.
 function verifyReplay(entry, claimedScore) {
-  const params = dailyParams(entry.levelId);
+  const params = verifiableParams(entry.levelId);
   if (!params) throw new ApiError(422, { error: 'unsupported-level' });
-  if (params.id !== `daily-${todayUtcDay()}`) {
-    throw new ApiError(422, { error: 'board-not-current' });
-  }
   if (entry.seed !== params.seed || entry.replay.seed !== params.seed) {
     throw new ApiError(422, { error: 'seed-mismatch' });
   }
@@ -543,5 +574,5 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Chromatic Pour server listening on http://localhost:${PORT}`);
+  console.log(`Chromatic Pour server listening on http://localhost:${server.address().port}`);
 });

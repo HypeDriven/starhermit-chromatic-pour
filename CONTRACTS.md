@@ -136,6 +136,8 @@ export class GameSession {
   hint() -> {...}|null
   result() -> {score, complete, elapsedMs, moves, invalidActions, sessionId,
                hintsUsed, undosUsed, assists:{hints,undos}}
+  checkTimeout() -> bool       // fails the round (time-limit-exceeded) when a
+                               // timeLimitMs constraint has elapsed between pours
   replayEnvelope() -> {schemaVersion:1, build, contentVersion, seed, initialHash,
     startedAt, commands:[{id,type,from,to,elapsedMs}], stateHashes:[{turn,hash}],
     terminal:{status,reason,score}}
@@ -165,6 +167,7 @@ recordResult(levelDef, result) -> {progression, newAchievements:[keys], stars:in
 // stars: 3 = <=par, 2 = <=par*1.5, 1 = complete. Updates streak, sessionsPlayed.
 ACHIEVEMENTS = [ {key:'first-pour-complete'|'mechanic-master'|'streak-3'|'adept-clear'|'completionist', name, desc} ]
 saveReplayEnvelope(env) ; listReplays() ; loadBestScore(boardKey) / saveBestScore(boardKey, entry)
+clearLocalProgress()         // erases local bests + archived replays (progress reset)
 checksumDoc(obj) -> {version, checksum, data} ; verifyDoc(doc) -> data|null
 ```
 
@@ -221,8 +224,13 @@ platform = {
   activityStart()/activityEnd(),
   heartbeat(),                           // throttled presence while playing
   submitScore(board, entry) -> Promise<{accepted, rank?}|{error}>,
+                               // entry = {levelId, seed, contentVersion, name?, sessionId,
+                               //   result:{score,moves,invalidActions,elapsedMs,assists,sessionId},
+                               //   replay:<envelope>}; only completed rounds are submitted
   fetchLeaderboard(board, scope) -> Promise<[entries]|{error}>,  // falls back to local bests
-  telemetry(event, data),                // consent-gated funnel events only
+  unlockAchievement(key) -> Promise, // durable idempotent delivery when hosted
+  telemetry(event, data),            // consent-gated funnel events only; queued
+                               // as {type, data, t} to match the server aggregate
   signIn() -> Promise                    // host shell flow; no-op guest message offline
 }
 ```
@@ -253,8 +261,12 @@ A confirm, B cancel, Start pause, X undo, Y hint.
 - Serves the distribution; `GET /api/v1/time` → `{now, epochMs}`.
 - `POST /api/v1/scores` validates a replay envelope by re-simulating commands
   through `rules.js` (same seed/content version), rejects impossible or
-  stale-version scores with `{"error":"..."}`; 429 on rate limit.
-- `GET /api/v1/leaderboard?board=daily-YYYY-MM-DD|global&scope=global|friends`.
+  stale-version scores with `{"error":"..."}`; 429 on rate limit. The entry
+  shape is the one listed under `platform.submitScore`; `board` must equal
+  `entry.levelId`. Verifiable boards: today's daily (`daily-YYYY-MM-DD`,
+  date-gated), authored challenges (fixed seeds/constraints), and score-chase
+  boards (`practice-master-chase-YYYY-MM-DD|evergreen`).
+- `GET /api/v1/leaderboard?board=<levelId>&scope=global|friends`.
 - `POST /api/v1/achievements` — idempotent unlock delivery.
 - JSON-file persistence under `data/` (created at runtime, git-ignored).
 - Port from `PORT` env, default 8080. Run: `node server.js`.
@@ -275,3 +287,5 @@ name=Chromatic Pour
 launch=index.html
 server=server.js
 ```
+
+For isolated API tests, set `CP_DATA_DIR` to a temporary directory and `PORT=0` for an ephemeral port. `node tests/server-regression.mjs` exercises ranked acceptance/rejection, telemetry, achievements, and malformed URLs without modifying the normal runtime store.

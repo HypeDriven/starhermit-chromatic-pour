@@ -6,6 +6,7 @@
 import * as rules from '../js/rules.js';
 import { GameSession } from '../js/session.js';
 import { createRng } from '../js/rng.js';
+import * as storage from '../js/storage.js';
 import {
   CONTENT_VERSION, COLOR_SETS, THEMES, DIFFICULTIES, LESSONS, JOURNEY, CHALLENGES,
   dailyLevel, practiceLevel, buildLevelState, getLevelById, parFor, validateContent,
@@ -623,6 +624,55 @@ test('hint: returns null on completed boards', () => {
   eq(rules.hint(s), null, 'no hint on a completed board');
   const solvedActive = makeState([[0, 0, 0, 0], [1, 1, 1, 1], [], []]);
   eq(rules.hint(solvedActive), null, 'no hint when already uniform');
+});
+
+// ---------------------------------------------------------------------------
+// Time-limit enforcement between pours (session.checkTimeout)
+// ---------------------------------------------------------------------------
+
+test('session: checkTimeout fails the round when the clock runs out mid-board', () => {
+  let nowMs = 1000;
+  const level = {
+    id: 't-timeout', name: 'Timeout', kind: 'challenge', seed: 'tto',
+    colorCount: 2, capacity: 4, emptyVessels: 2,
+    constraints: { timeLimitMs: 5000 }, vessels: [[0, 1], [1, 0], [], []],
+    parMoves: 4, theme: 'ember', contentVersion: CONTENT_VERSION,
+  };
+  const s = new GameSession(level, { sessionId: 'tto', now: () => nowMs });
+  s.start();
+  eq(s.checkTimeout(), false, 'no timeout before the limit');
+  nowMs = 7000; // 6 s elapsed > 5 s limit, without any pour
+  eq(s.checkTimeout(), true, 'timeout fires once the limit elapses');
+  eq(s.state.status, 'failed');
+  eq(s.state.terminalReason, rules.TERMINAL.TIME_LIMIT);
+  eq(s.state.elapsedMs, 6000, 'authoritative elapsed recorded at failure');
+  eq(s.checkTimeout(), false, 'not re-triggered on a terminal state');
+  const env = s.replayEnvelope();
+  eq(env.terminal.reason, rules.TERMINAL.TIME_LIMIT);
+  assert(env.commands.some((c) => c.type === 'timeout'), 'timeout logged for the replay archive');
+});
+
+test('session: checkTimeout is a no-op without a time limit or after completion', () => {
+  let nowMs = 0;
+  const s = new GameSession(practiceLevel('apprentice', 'no-timeout'), { sessionId: 'nt', now: () => nowMs });
+  s.start();
+  nowMs = 10 * 60 * 1000;
+  eq(s.checkTimeout(), false, 'no constraint -> never times out');
+  eq(s.state.status, 'active');
+});
+
+// ---------------------------------------------------------------------------
+// Storage: reset clears local bests and replays
+// ---------------------------------------------------------------------------
+
+test('storage: clearLocalProgress erases bests and replays', () => {
+  storage.saveBestScore('board-x', { score: 1234, moves: 9, ms: 9000 });
+  storage.saveReplayEnvelope({ schemaVersion: 1, commands: [] });
+  assert(storage.loadBestScore('board-x'), 'best recorded before clear');
+  assert(storage.listReplays().length > 0, 'replay recorded before clear');
+  storage.clearLocalProgress();
+  eq(storage.loadBestScore('board-x'), null, 'bests cleared');
+  eq(storage.listReplays().length, 0, 'replays cleared');
 });
 
 // ---------------------------------------------------------------------------

@@ -170,6 +170,12 @@ export function saveProgression(p) {
   writeJson(PREFIX + 'progression', normalizeProgression(p));
 }
 
+// Erase local bests and archived replays (used by "reset all progress").
+export function clearLocalProgress() {
+  writeJson(PREFIX + 'bests', {});
+  writeJson(PREFIX + 'replays', []);
+}
+
 function utcDay(ms) {
   return new Date(ms).toISOString().slice(0, 10);
 }
