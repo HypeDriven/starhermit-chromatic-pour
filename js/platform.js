@@ -2,6 +2,14 @@
 // the game runs standalone (no launch token): scores/leaderboards go local,
 // telemetry is dropped, sign-in reports {error:'offline'}.
 //
+// The host shell opens the game as `index.html#game_token=<jwt>` (a
+// game-scoped JWT carrying `sub` = user id and `game_scope`). Every same-origin
+// /api call sends it as a bearer header. The player's display name is the
+// profile nickname from GET /api/v1/users/{sub}/profile — the only profile
+// read a game-scoped token may make — never the raw account username. The
+// avatar is deliberately not fetched: players without one 404, which the
+// browser reports as a console error on every launch.
+//
 // Telemetry consent is read through the `getConsent` function passed to
 // initPlatform(opts.getConsent); when omitted it falls back to
 // storage.loadSettings().telemetryConsent. Only funnel events are allowed.
@@ -46,20 +54,25 @@ export async function initPlatform(opts = {}) {
         try { return !!loadSettings().telemetryConsent; } catch { return false; }
       };
 
-  // Launch token: read from the URL, decoded for scope, never persisted.
+  // Launch token: read from the URL, decoded for scope + user id, never
+  // persisted. The host shell passes it in the fragment (#game_token=); the
+  // query forms are kept for older launchers and local testing.
   let token = null;
   let scope = null;
+  let userId = null;
   let profile = null;
   try {
+    const h = new URLSearchParams(String(window.location.hash || '').replace(/^#/, ''));
     const q = new URLSearchParams(window.location.search);
-    token = q.get('launchToken') || q.get('token') || null;
+    token = h.get('game_token') || q.get('game_token') || q.get('launchToken') || q.get('token') || null;
   } catch {
     token = null;
   }
   if (token) {
     try {
       const payload = decodeJwtPayload(token);
-      scope = payload?.scope ?? payload?.game ?? null;
+      scope = payload?.game_scope ?? payload?.scope ?? payload?.game ?? null;
+      userId = typeof payload?.sub === 'string' && payload.sub ? payload.sub : null;
       if (payload?.profile && typeof payload.profile === 'object') {
         profile = {
           displayName: payload.profile.displayName ?? null,
@@ -71,9 +84,11 @@ export async function initPlatform(opts = {}) {
     } catch {
       token = null; // malformed token: treat as standalone
       scope = null;
+      userId = null;
     }
   }
   const hosted = !!token;
+  const profileListeners = new Set();
 
   let offset = 0;
   let sessionActive = false;
@@ -85,9 +100,11 @@ export async function initPlatform(opts = {}) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
     try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers.Authorization = 'Bearer ' + token;
       const res = await fetch(path, {
         method,
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: ctrl.signal,
         credentials: 'same-origin',
@@ -131,6 +148,50 @@ export async function initPlatform(opts = {}) {
     }
     offset = 0;
     return { error: 'unavailable' };
+  }
+
+  // Resolve the signed-in player's display name. Retried briefly so a flaky
+  // network does not leave the chip reading "Guest" for the whole session.
+  // Falls back to the token's name claim, then a neutral shortened id.
+  async function fetchProfile() {
+    if (!hosted || !userId) return profile;
+    const id = encodeURIComponent(userId);
+    let p = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const r = await apiFetch('/api/v1/users/' + id + '/profile');
+        if (r.status >= 200 && r.status < 300 && r.json && typeof r.json === 'object') { p = r.json; break; }
+        if (r.status === 401 || r.status === 403 || r.status === 404) break; // not retryable
+      } catch { /* retry */ }
+      if (attempt < 2) await new Promise((res) => setTimeout(res, 400 * (attempt + 1)));
+    }
+    const name = p && (p.nickname || p.username);
+    if (name) {
+      profile = {
+        displayName: String(name).slice(0, 40),
+        avatarUrl: profile?.avatarUrl ?? null,
+        userId,
+      };
+      platform.profile = profile;
+      notifyProfile();
+    } else if (!profile) {
+      profile = { displayName: 'Player ' + userId.slice(0, 8), avatarUrl: null, userId };
+      platform.profile = profile;
+      notifyProfile();
+    }
+    return profile;
+  }
+
+  function onProfile(fn) {
+    if (typeof fn !== 'function') return () => {};
+    profileListeners.add(fn);
+    return () => profileListeners.delete(fn);
+  }
+
+  function notifyProfile() {
+    for (const fn of profileListeners) {
+      try { fn(profile); } catch { /* listener errors never break the adapter */ }
+    }
   }
 
   function activityStart() {
@@ -229,7 +290,7 @@ export async function initPlatform(opts = {}) {
   async function signIn() {
     if (!hosted) return { error: 'offline' };
     try {
-      const next = encodeURIComponent(window.location.pathname + window.location.search);
+      const next = encodeURIComponent(window.location.pathname + window.location.search + window.location.hash);
       window.location.href = '/auth/login?next=' + next;
       return { ok: true };
     } catch {
@@ -250,15 +311,23 @@ export async function initPlatform(opts = {}) {
   }
 
   const platform = {
-    hosted, scope, profile,
+    hosted, scope, userId, profile,
     serverNow, syncTime,
+    fetchProfile, onProfile,
     activityStart, activityEnd, heartbeat,
     submitScore, fetchLeaderboard,
     telemetry, signIn, unlockAchievement,
   };
 
   if (hosted) {
-    await syncTime().catch(() => {});
+    // Clock sync and profile lookup run together; the profile is given a short
+    // budget here so boot is never held up — a late answer still lands via
+    // onProfile listeners.
+    const profileReady = fetchProfile().catch(() => profile);
+    await Promise.all([
+      syncTime().catch(() => {}),
+      Promise.race([profileReady, new Promise((r) => setTimeout(r, 2000))]),
+    ]);
     flushTimer = setInterval(() => flushTelemetry(false), TELEMETRY_FLUSH_MS);
     if (flushTimer.unref) flushTimer.unref();
     try {

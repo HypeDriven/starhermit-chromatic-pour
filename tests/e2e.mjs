@@ -52,6 +52,36 @@ const MIME = {
   '.ts': 'text/plain; charset=utf-8',
 };
 
+// Hosted-mode fixture: the StarHermit launcher opens the game as
+// index.html#game_token=<jwt> and the platform serves /api same-origin. This
+// mock covers only what the hosted pass needs — clock sync and the profile
+// read a game-scoped token is allowed to make — and records the bearer header
+// so the test can prove the token was sent.
+const HOST_USER_ID = 'a1b2c3d4-0000-4000-8000-feedfacecafe';
+const HOST_NICKNAME = 'Starfox Al';
+const hostCalls = [];
+function fakeJwt(claims) {
+  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  return `${b64({ alg: 'none' })}.${b64(claims)}.sig`;
+}
+const HOST_TOKEN = fakeJwt({ sub: HOST_USER_ID, game_scope: 'chromatic-pour', unique_name: 'albert_raw' });
+
+function sendJson(res, status, obj) {
+  const body = JSON.stringify(obj);
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(body) });
+  res.end(body);
+}
+
+function mockApi(req, res, pathname) {
+  hostCalls.push({ path: pathname, auth: req.headers.authorization || null });
+  if (req.method === 'GET' && pathname === '/api/v1/time') return sendJson(res, 200, { epochMs: Date.now() });
+  if (req.method === 'GET' && pathname === `/api/v1/users/${HOST_USER_ID}/profile`) {
+    if (req.headers.authorization !== `Bearer ${HOST_TOKEN}`) return sendJson(res, 401, { error: 'unauthorized' });
+    return sendJson(res, 200, { id: HOST_USER_ID, username: 'albert_raw', nickname: HOST_NICKNAME });
+  }
+  return sendJson(res, 404, { error: 'not-found' });
+}
+
 function startServer() {
   const server = http.createServer((req, res) => {
     let rel;
@@ -61,6 +91,7 @@ function startServer() {
       res.writeHead(400).end();
       return;
     }
+    if (rel.startsWith('/api/')) return mockApi(req, res, rel);
     if (rel === '/') rel = '/index.html';
     const filePath = path.resolve(ROOT, '.' + rel);
     if (filePath !== ROOT && !filePath.startsWith(ROOT + path.sep)) {
@@ -295,6 +326,41 @@ async function runPass(browser, vpName, contextOpts) {
   }
 }
 
+// Launched from StarHermit: the top chip must show the profile nickname, not
+// "Guest — sign in" and not the raw account username.
+async function runHostedPass(browser) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
+  hostCalls.length = 0;
+  try {
+    await step('[hosted] launch with #game_token shows nickname', async () => {
+      await page.goto(`${baseUrl}/index.html#game_token=${HOST_TOKEN}`, { waitUntil: 'load' });
+      await page.waitForSelector('#screen-title:not([hidden])', { timeout: 15000 });
+      await waitForState(page, ['title', 'profile-ready']);
+      const chip = page.locator('.cp-profilechip');
+      await page.waitForFunction(
+        (nick) => document.querySelector('.cp-profilechip')?.textContent.trim() === nick,
+        HOST_NICKNAME, { timeout: 8000 },
+      );
+      const text = (await chip.textContent()).trim();
+      if (text !== HOST_NICKNAME) throw new Error(`profile chip reads "${text}", expected "${HOST_NICKNAME}"`);
+      if (/guest|sign in|albert_raw/i.test(text)) throw new Error(`profile chip leaks guest/username text: "${text}"`);
+      const label = await chip.getAttribute('aria-label');
+      if (!label || !label.includes(HOST_NICKNAME)) throw new Error(`chip aria-label missing nickname: ${label}`);
+      const profileCall = hostCalls.find((c) => c.path === `/api/v1/users/${HOST_USER_ID}/profile`);
+      if (!profileCall) throw new Error('game never requested the profile endpoint');
+      if (profileCall.auth !== `Bearer ${HOST_TOKEN}`) throw new Error('profile request lacked the launch token bearer header');
+      await page.screenshot({ path: SHOT('hosted-title', 'desktop') });
+    });
+    checkErrors('hosted pass', errors);
+  } finally {
+    await context.close();
+  }
+}
+
 const server = await startServer();
 const port = server.address().port;
 const baseUrl = `http://127.0.0.1:${port}`;
@@ -313,7 +379,8 @@ try {
     isMobile: true,
     deviceScaleFactor: 2,
   });
-  console.log('\nE2E PASS — full playthrough on desktop + mobile, no page errors');
+  await runHostedPass(browser);
+  console.log('\nE2E PASS — full playthrough on desktop + mobile + hosted nickname, no page errors');
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));

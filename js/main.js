@@ -67,9 +67,12 @@ function offlinePlatform(note) {
   return {
     hosted: false,
     scope: null,
+    userId: null,
     profile: null,
     serverNow: () => Date.now(),
     syncTime: async () => {},
+    fetchProfile: async () => null,
+    onProfile: () => () => {},
     activityStart: () => {},
     activityEnd: () => {},
     heartbeat: () => {},

@@ -374,6 +374,17 @@ export function createUI({ root, services }) {
     }
   }
 
+  // The hosted profile can resolve after boot (short-budget lookup in
+  // platform.js): refresh the chip and greet the player once it lands.
+  if (typeof platform.onProfile === 'function') {
+    platform.onProfile(() => {
+      updateProfileChip();
+      if (currentState === 'title' && platform.profile?.displayName) {
+        transition('profile-ready', { owner: 'ui', reason: 'profile-resolved' });
+      }
+    });
+  }
+
   profileChip.addEventListener('click', async () => {
     audio?.play('ui');
     if (platform.profile) {

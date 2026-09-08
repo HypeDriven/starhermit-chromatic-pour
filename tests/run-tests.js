@@ -676,6 +676,118 @@ test('storage: clearLocalProgress erases bests and replays', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Platform: launch token + profile nickname (stubbed window/fetch)
+// ---------------------------------------------------------------------------
+
+async function testAsync(name, fn) {
+  try {
+    await fn();
+    passed++;
+    console.log(`ok   ${name}`);
+  } catch (e) {
+    failed++;
+    failures.push({ name, message: e.message });
+    console.error(`FAIL ${name}\n     ${(e.stack || e).split('\n').join('\n     ')}`);
+  }
+}
+
+function fakeJwt(claims) {
+  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  return `${b64({ alg: 'none' })}.${b64(claims)}.sig`;
+}
+
+// Runs initPlatform with a fake location + fetch; returns {platform, calls}.
+async function withHost({ hash = '', search = '' }, routes) {
+  const calls = [];
+  const prevWindow = globalThis.window;
+  const prevFetch = globalThis.fetch;
+  globalThis.window = { location: { hash, search, pathname: '/index.html' }, addEventListener() {} };
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url, headers: init.headers || {} });
+    const route = routes[url] || { status: 404, body: { error: 'not-found' } };
+    return {
+      status: route.status,
+      ok: route.status >= 200 && route.status < 300,
+      headers: { get: () => null },
+      json: async () => route.body,
+      blob: async () => null,
+    };
+  };
+  try {
+    const { initPlatform } = await import('../js/platform.js');
+    const platform = await initPlatform({ getConsent: () => false });
+    return { platform, calls };
+  } finally {
+    if (prevWindow === undefined) delete globalThis.window; else globalThis.window = prevWindow;
+    globalThis.fetch = prevFetch;
+  }
+}
+
+const USER_ID = 'a1b2c3d4-0000-4000-8000-feedfacecafe';
+const PROFILE_URL = `/api/v1/users/${USER_ID}/profile`;
+
+await testAsync('platform: #game_token launch shows the StarHermit nickname', async () => {
+  const jwt = fakeJwt({ sub: USER_ID, game_scope: 'chromatic-pour', unique_name: 'albert_raw' });
+  const { platform, calls } = await withHost({ hash: `#game_token=${jwt}` }, {
+    '/api/v1/time': { status: 200, body: { epochMs: Date.now() } },
+    [PROFILE_URL]: { status: 200, body: { id: USER_ID, username: 'albert_raw', nickname: 'Starfox Al' } },
+  });
+  eq(platform.hosted, true, 'hosted when a game_token fragment is present');
+  eq(platform.scope, 'chromatic-pour', 'scope from game_scope claim');
+  eq(platform.userId, USER_ID, 'user id from sub claim');
+  eq(platform.profile?.displayName, 'Starfox Al', 'display name is the profile nickname, not the username');
+  const profileCall = calls.find((c) => c.url === PROFILE_URL);
+  assert(profileCall, 'profile endpoint was called');
+  eq(profileCall.headers.Authorization, `Bearer ${jwt}`, 'profile request carries the launch token');
+  const timeCall = calls.find((c) => c.url === '/api/v1/time');
+  eq(timeCall?.headers.Authorization, `Bearer ${jwt}`, 'api calls carry the launch token');
+});
+
+await testAsync('platform: nickname falls back to username, then neutral id', async () => {
+  const jwt = fakeJwt({ sub: USER_ID, game_scope: 'chromatic-pour' });
+  const a = await withHost({ search: `?token=${jwt}` }, {
+    '/api/v1/time': { status: 200, body: { epochMs: Date.now() } },
+    [PROFILE_URL]: { status: 200, body: { id: USER_ID, username: 'albert_raw', nickname: '' } },
+  });
+  eq(a.platform.profile?.displayName, 'albert_raw', 'username used when nickname is empty');
+  const b = await withHost({ search: `?token=${jwt}` }, {
+    '/api/v1/time': { status: 200, body: { epochMs: Date.now() } },
+    [PROFILE_URL]: { status: 403, body: { error: 'forbidden' } },
+  });
+  eq(b.platform.profile?.displayName, 'Player a1b2c3d4', 'neutral shortened id when the profile is unreadable');
+  assert(!b.platform.profile.displayName.includes(USER_ID), 'never leaks the full user id');
+});
+
+await testAsync('platform: standalone launch stays guest', async () => {
+  const { platform, calls } = await withHost({}, {});
+  eq(platform.hosted, false, 'no token -> standalone');
+  eq(platform.profile, null, 'no profile -> guest chip');
+  eq(calls.length, 0, 'no network calls when standalone');
+});
+
+await testAsync('platform: late profile answer reaches onProfile listeners', async () => {
+  const jwt = fakeJwt({ sub: USER_ID, game_scope: 'chromatic-pour' });
+  const seen = [];
+  const { platform } = await withHost({ hash: `#game_token=${jwt}` }, {
+    '/api/v1/time': { status: 200, body: { epochMs: Date.now() } },
+    [PROFILE_URL]: { status: 200, body: { id: USER_ID, username: 'u', nickname: 'Late Nick' } },
+  });
+  platform.onProfile((p) => seen.push(p.displayName));
+  // fetchProfile is idempotent and re-notifies; the UI relies on this signal.
+  globalThis.window = { location: { hash: '', search: '', pathname: '/' }, addEventListener() {} };
+  const prevFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ status: 200, ok: true, headers: { get: () => null },
+    json: async () => ({ id: USER_ID, username: 'u', nickname: 'Late Nick' }), blob: async () => null });
+  try {
+    await platform.fetchProfile();
+  } finally {
+    globalThis.fetch = prevFetch;
+    delete globalThis.window;
+  }
+  eq(seen[0], 'Late Nick', 'listener received the resolved nickname');
+});
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 

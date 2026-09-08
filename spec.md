@@ -185,11 +185,11 @@ No module may mutate rules state except through a validated command. Rendering c
 
 ### Packaging and launch
 - Ship a browser distribution with `starhermit.txt` at its root, `name=Chromatic Pour`, and `launch=index.html`. Keep source files, secrets, design documents, and source maps outside the uploaded distribution.
-- Read the game scope from the short-lived launch token rather than hard-coding a slug. Use same-origin `/api` and `/ws` routes when hosted. Refresh account tokens through the host shell; never persist access or launch tokens in local storage.
+- The host shell opens the game as `index.html#game_token=<jwt>`; the game reads the game scope (`game_scope`) and player id (`sub`) from that short-lived launch token rather than hard-coding a slug, and sends it as a bearer header on every same-origin `/api` call. Refresh account tokens through the host shell; never persist access or launch tokens in local storage.
 - Synchronize countdowns and daily boundaries with `GET /api/v1/time` using round-trip-adjusted offset. Treat rate limits and structured `{"error":"..."}` responses as recoverable UI states.
 
 ### Identity, profile, presence, and preferences
-- Support guest practice locally, then offer account sign-in for durable progress. Use the profile display name and avatar only where identity is useful, honor profile privacy, and send throttled presence heartbeats while actively playing.
+- Support guest practice locally, then offer account sign-in for durable progress. When launched from StarHermit, the top chip shows the player's profile nickname (from `GET /api/v1/users/{id}/profile`, falling back to the username, then a neutral shortened id), never "Guest — sign in" and never the raw account username. The lookup has a short boot budget; a late answer still refreshes the chip. Use identity only where it is useful, honor profile privacy, and send throttled presence heartbeats while actively playing.
 - Store accessibility, audio, graphics tier, tutorial completion, camera preference, and rules options through per-game settings. Declare desktop action bindings and read player overrides; touch mappings remain responsive UI controls.
 - Cloud-save progression as a versioned, checksummed document. Resolve conflicts by preserving both snapshots and asking the player when neither is a strict descendant. Never place credentials or private chat in saves.
 
