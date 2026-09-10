@@ -1,0 +1,19 @@
+# Chromatic Pour — SFX manifest (canonical)
+# file | event id | description of the sound | usage context
+# All clips: MOSS-SoundEffect v2.0, 48 kHz mono Opus 96 kbps, loudness-normalized (-20 LUFS).
+# Event ids are the names passed to audio.play() in js/ui.js; js/audio.js keeps a synthesized fallback per event.
+select.opus | select | A small glass vial lifted off a wooden shelf, brief delicate clink. | First tap/confirm on a vessel with liquid: the vessel lifts (ui.js handleSelectResult).
+deselect.opus | deselect | A small glass vial set back down gently on wood, soft muted clink. | Tapping the lifted vessel again or pressing Escape clears the selection.
+pour-start.opus | pour-start | Liquid beginning to pour from one glass vessel into another, rising watery glug. | A legal pour begins (ui.js doPour); plays while layers animate across.
+pour-end.opus | pour-end | The last drops of liquid trickling into a glass vessel with a soft splash. | The pour animation settles and input unlocks (ui.js settlePour).
+invalid.opus | invalid | A dull wooden thunk, a knuckle tapping a corked flask once. | Refused pour, empty-vessel selection, undo with nothing to undo, or a lesson step done out of order.
+layer-complete.opus | layer-complete | A bright crystal chime with a short shimmering resonance, a small spell completing. | A vessel becomes full and single-colour after a pour; also each completed lesson step.
+win.opus | win | A short celebratory sparkle of small bells and chimes rising together, magical triumph. | Every vessel is uniform: the round completes (ui.js endRound).
+fail.opus | fail | A soft descending two-note droop on a wooden marimba, gentle disappointment. | Round fails on a move limit or time limit (ui.js endRound).
+undo.opus | undo | A quick reversed whoosh of air, like a book page flipped backward. | Undo restores the previous shelf (ui.js doUndo).
+ui.opus | ui | A very short soft interface tick, a fingertip tap on polished wood. | Buttons, cards, restart, the "Go" of the countdown.
+hint.opus | hint | Two delicate glass-bell pings chiming softly, a gentle idea arriving. | Hint highlights the suggested source and target vessels (ui.js doHint).
+tick.opus | tick | A single short clockwork tick, a small wooden metronome click. | The 3-2-1 countdown steps before a round goes active (ui.js onCountdown).
+achievement.opus | achievement | A warm bright brass bell struck once, then a rising shimmer of tiny glass chimes. | One or more achievements unlock on the results transition (ui.js endRound).
+time-warning.opus | time-warning | Three quick urgent fingernail taps on a crystal vial, a clear tense warning ping. | One-shot when a timed challenge drops under 15 seconds (ui.js updateTimer).
+new-best.opus | new-best | A bright ascending three-note glockenspiel arpeggio with a soft sparkling tail. | Results screen when the score beats the stored personal best for the board (ui.js renderResults).

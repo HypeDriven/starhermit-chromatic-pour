@@ -259,7 +259,26 @@ button.card:hover:not(:disabled) {
 /* Title screen                                                        */
 /* ------------------------------------------------------------------ */
 
-.cp-title-hero { text-align: center; padding: 2rem 0 1rem; }
+.cp-title-hero { text-align: center; padding: 1rem 0 1rem; }
+
+/* Key art: a decorative shelf banner behind the wordmark. Hidden by JS if
+   the file fails to load; the title works without it. */
+.cp-title-art {
+  display: block;
+  width: min(100%, 56rem);
+  max-height: clamp(9rem, 32vh, 20rem);
+  margin: 0 auto 0.75rem;
+  object-fit: cover;
+  border-radius: var(--radius);
+  border: 1px solid var(--panel-border);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45), 0 0 48px var(--accent-soft);
+  -webkit-mask-image: linear-gradient(180deg, #000 70%, transparent 100%);
+  mask-image: linear-gradient(180deg, #000 70%, transparent 100%);
+}
+.cp-title-art[hidden] { display: none; }
+@media (max-height: 500px) and (orientation: landscape) {
+  .cp-title-art { max-height: 7rem; }
+}
 
 .cp-wordmark { margin: 0 0 0.15em; font-size: clamp(2.6rem, 9vw, 5rem); letter-spacing: 0.04em; }
 .cp-wordmark-a { color: var(--ink); }
@@ -659,6 +678,16 @@ body.labels-on .layer-label { display: block; }
 .screen-results { max-width: 44rem; }
 .screen-results h1 { font-size: clamp(1.8rem, 6vw, 2.6rem); color: var(--accent); text-shadow: 0 0 18px var(--accent-soft); }
 .cp-stars { font-size: 2rem; color: var(--accent); letter-spacing: 0.2em; margin: 0; }
+.cp-results-art {
+  display: block;
+  width: 100%;
+  max-height: clamp(7rem, 26vh, 15rem);
+  object-fit: cover;
+  border-radius: var(--radius);
+  border: 1px solid var(--panel-border);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+}
+.cp-results-art[hidden] { display: none; }
 .cp-score-table { margin: 0.5rem 0; }
 .cp-result-stats { font-size: 1.05rem; }
 .cp-ranked-note { color: var(--accent); }

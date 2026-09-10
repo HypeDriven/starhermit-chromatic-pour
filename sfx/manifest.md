@@ -16,3 +16,6 @@ Generated with MOSS-SoundEffect v2.0, 48 kHz mono Opus (96 kbps VBR, loudness-no
 | ui.opus | ui | A very short soft interface tick, a fingertip tap on polished wood. |
 | hint.opus | hint | Two delicate glass-bell pings chiming softly, a gentle idea arriving. |
 | tick.opus | tick | A single short clockwork tick, a small wooden metronome click. |
+| achievement.opus | achievement | A warm bright brass bell struck once, followed by a rising shimmer of tiny glass chimes, a reward being granted in a quiet workshop. |
+| time-warning.opus | time-warning | Three quick urgent taps of a fingernail on a crystal vial, a clear tense warning ping, close-miked. |
+| new-best.opus | new-best | A bright ascending three-note glockenspiel arpeggio with a soft sparkling tail, a personal record celebrated. |

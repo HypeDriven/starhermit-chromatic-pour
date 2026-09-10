@@ -3,6 +3,8 @@
 // once loaded; synthesis remains the fallback. Lazy AudioContext, bused gains,
 // seeded pitch variants (audioStream) so replays sound identical.
 // Browser-only; if WebAudio is unavailable every export degrades to a no-op.
+// Event ids: select, deselect, pour-start, pour-end, invalid, layer-complete,
+// win, fail, undo, ui, hint, tick, achievement, time-warning, new-best.
 
 import { audioStream, hashSeed } from './rng.js';
 
@@ -188,6 +190,25 @@ export function createAudio(settings = {}, { audioSeed = 'default' } = {}) {
     'tick': (p) => {
       noise({ filterType: 'bandpass', filterFreq: 2000 * p, q: 8, dur: 0.04, peak: 0.1, attack: 0.001 });
       tone({ freq: 1000 * p, dur: 0.03, peak: 0.04, attack: 0.001 });
+    },
+    'achievement': (p) => {
+      // brass bell + rising glass shimmer
+      tone({ freq: 784 * p, dur: 0.9, peak: 0.12, type: 'triangle' });
+      tone({ freq: 1568 * p, dur: 0.7, peak: 0.05, at: 0.05 });
+      [1318.5, 1760, 2093].forEach((f, i) => tone({ freq: f * p, dur: 0.35, peak: 0.04, at: 0.25 + i * 0.09 }));
+    },
+    'time-warning': (p) => {
+      // three quick crystal taps
+      for (let i = 0; i < 3; i++) {
+        tone({ freq: 2200 * p, dur: 0.07, peak: 0.1, attack: 0.001, at: i * 0.11 });
+      }
+    },
+    'new-best': (p) => {
+      // ascending three-note glockenspiel arpeggio
+      [1046.5, 1318.5, 1568].forEach((f, i) => {
+        tone({ freq: f * p, dur: 0.5, peak: 0.1, type: 'triangle', at: i * 0.12 });
+        tone({ freq: f * 2 * p, dur: 0.3, peak: 0.02, at: i * 0.12 });
+      });
     },
   };
 

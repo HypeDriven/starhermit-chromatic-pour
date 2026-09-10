@@ -39,6 +39,7 @@ const MIME = {
   '.txt': 'text/plain; charset=utf-8',
   '.md': 'text/plain; charset=utf-8',
   '.png': 'image/png',
+  '.webp': 'image/webp',
   '.svg': 'image/svg+xml',
   '.opus': 'audio/ogg',
   '.woff2': 'font/woff2',
@@ -54,6 +55,10 @@ function serveStatic(req, res, pathname) {
     return sendJson(res, 400, { error: 'bad-path' });
   }
   if (rel === '/') rel = '/index.html';
+  // Dev-only material is never served: tests/, tools/, and dotfiles.
+  if (/^\/(tests|tools)(\/|$)/.test(rel) || rel.split('/').some((seg) => seg.startsWith('.'))) {
+    return sendJson(res, 404, { error: 'not-found' });
+  }
   const filePath = path.resolve(ROOT, '.' + rel);
   if (filePath !== ROOT && !filePath.startsWith(ROOT + path.sep)) {
     return sendJson(res, 400, { error: 'bad-path' });

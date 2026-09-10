@@ -42,6 +42,7 @@ const MIME = {
   '.md': 'text/plain; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  '.webp': 'image/webp',
   '.ico': 'image/x-icon',
   '.wav': 'audio/wav',
   '.mp3': 'audio/mpeg',
@@ -118,7 +119,7 @@ function startServer() {
   });
   return new Promise((resolve, reject) => {
     server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => resolve(server));
+    server.listen(Number(process.env.PORT) || 0, '127.0.0.1', () => resolve(server));
   });
 }
 

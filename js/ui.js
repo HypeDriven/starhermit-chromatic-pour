@@ -183,6 +183,7 @@ export function createUI({ root, services }) {
   let countdownTimer = 0;
   let lastFocusedBeforeOverlay = null;
   let dailyCountdownLast = '';
+  let timeWarned = false;      // one-shot 'time-warning' cue per round
   let gamepadPrev = [];
   let gamepadRepeatAt = 0;
 
@@ -454,8 +455,13 @@ export function createUI({ root, services }) {
       el('button', { class: 'btn btn-ghost', type: 'button', text: 'Progress', onclick: () => { transition('progression', { owner: 'ui', reason: 'title-nav' }); } }),
       el('button', { class: 'btn btn-ghost', type: 'button', text: 'All modes', onclick: () => { transition('mode-select', { owner: 'ui', reason: 'title-nav' }); } }));
 
+    const titleArt = el('img', {
+      class: 'cp-title-art', src: 'assets/title-art.webp', alt: '', 'aria-hidden': 'true',
+      decoding: 'async', onerror: () => { titleArt.hidden = true; },
+    });
+
     s.append(
-      el('div', { class: 'cp-title-hero' }, wordmark,
+      el('div', { class: 'cp-title-hero' }, titleArt, wordmark,
         el('p', { class: 'cp-tagline', text: 'An alchemist’s sorting ritual. Pour every hue home.' }),
         playBtn,
         !isWebGL ? el('p', { class: 'cp-nowebgl', text: '3D shelf unavailable — playing in classic view.' }) : null),
@@ -843,6 +849,7 @@ export function createUI({ root, services }) {
     roundSettling = false;
     lastResult = null;
     inputLocked = false;
+    timeWarned = false;
     try {
       session = new GameSession(level, { now: () => Date.now() });
     } catch (err) {
@@ -931,7 +938,7 @@ export function createUI({ root, services }) {
       void overlay.offsetWidth;
       overlay.classList.add('pop');
       announce(steps[i] === 'Go' ? 'Go!' : steps[i]);
-      if (steps[i] === 'Go') audio?.play('ui');
+      audio?.play(steps[i] === 'Go' ? 'ui' : 'tick');
       i += 1;
       countdownTimer = setTimeout(advance, stepMs);
     };
@@ -1098,6 +1105,11 @@ export function createUI({ root, services }) {
       const remaining = limit - elapsed;
       playRefs.timerEl.textContent = `−${fmtTime(Math.max(0, remaining))}`;
       playRefs.timerEl.classList.toggle('danger', remaining < 15000);
+      if (!timeWarned && remaining < 15000 && remaining > 0 && state.status === 'active' && currentState === 'active') {
+        timeWarned = true;
+        audio?.play('time-warning');
+        announce('Fifteen seconds left.', true);
+      }
     } else {
       playRefs.timerEl.textContent = fmtTime(elapsed);
       playRefs.timerEl.classList.remove('danger');
@@ -1308,9 +1320,16 @@ export function createUI({ root, services }) {
       try { r.setState(session.state, events); r.setSelected(null); r.playEvents(events); } catch { /* decorative */ }
     }
 
+    // A vessel that just became full and uniform earns its own chime; the
+    // terminal win/fail cue covers the last pour of a round.
+    const stateAfter = session.state;
+    const harmonized = !!(pourEvt && !terminal && stateAfter &&
+      stateAfter.vessels[to].length === stateAfter.capacity && rules.isVesselComplete(stateAfter, to));
+
     clearTimeout(unlockTimer);
     unlockTimer = setTimeout(() => {
       settlePour(srcBtn, dstBtn);
+      if (harmonized) audio?.play('layer-complete');
       // In lessons the tutorial flow owns advancement; rounds never "end".
       if (terminal && !tutorial) {
         endRound(terminal);
@@ -1388,6 +1407,7 @@ export function createUI({ root, services }) {
     if (inputLocked || !session) return;
     if (tutorial && !tutorialGate('restart')) return;
     session.restart();
+    timeWarned = false;
     audio?.play('ui');
     renderBoard();
     updateHud();
@@ -1559,6 +1579,7 @@ export function createUI({ root, services }) {
     } catch {
       showError('storage');
     }
+    if ((record.newAchievements || []).length) audio?.play('achievement');
     for (const key of record.newAchievements || []) {
       const meta = (storage.ACHIEVEMENTS || []).find((a) => a.key === key);
       toast(`Achievement unlocked: ${meta ? meta.name : key}`, 'achievement');
@@ -1671,8 +1692,15 @@ export function createUI({ root, services }) {
         ? `Assists used: ${result.assists.hints} hint${result.assists.hints === 1 ? '' : 's'}, ${result.assists.undos} undo${result.assists.undos === 1 ? '' : 's'}`
         : 'No assists used — a clean pair of hands.' });
 
+    const resultsArt = el('img', {
+      class: 'cp-results-art', alt: '', 'aria-hidden': 'true', decoding: 'async',
+      src: ctx.complete ? 'assets/results-harmonized.webp' : 'assets/results-resists.webp',
+      onerror: () => { resultsArt.hidden = true; },
+    });
+
     const sections = [
       el('h1', { text: headline }),
+      resultsArt,
       ctx.complete && levelDef?.kind === 'journey'
         ? el('p', { class: 'cp-stars', 'aria-label': `${ctx.stars} of 3 stars`, text: '★'.repeat(ctx.stars) + '☆'.repeat(3 - ctx.stars) })
         : null,
@@ -1702,6 +1730,7 @@ export function createUI({ root, services }) {
     if (ctx.bestBefore != null) {
       const prev = ctx.bestBefore.score ?? ctx.bestBefore;
       const delta = result.score.total - prev;
+      if (delta > 0 && ctx.complete) audio?.play('new-best');
       sections.push(el('p', { class: 'card-dim', text: delta > 0
         ? `A new personal best — ${fmtScore(delta)} above your previous ${fmtScore(prev)}.`
         : `Your best remains ${fmtScore(prev)}.` }));

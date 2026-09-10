@@ -70,5 +70,23 @@
     "seconds": 1,
     "prompt": "A single short clockwork tick, a small wooden metronome click.",
     "event": "tick"
+  },
+  {
+    "name": "achievement",
+    "seconds": 2,
+    "prompt": "A warm bright brass bell struck once, followed by a rising shimmer of tiny glass chimes, a reward being granted in a quiet workshop.",
+    "event": "achievement"
+  },
+  {
+    "name": "time-warning",
+    "seconds": 1,
+    "prompt": "Three quick urgent taps of a fingernail on a crystal vial, a clear tense warning ping, close-miked.",
+    "event": "time-warning"
+  },
+  {
+    "name": "new-best",
+    "seconds": 2,
+    "prompt": "A bright ascending three-note glockenspiel arpeggio with a soft sparkling tail, a personal record celebrated.",
+    "event": "new-best"
   }
 ]
