@@ -669,6 +669,8 @@ body.labels-on .layer-label { display: block; }
   max-width: 34rem;
   margin: 0 auto;
 }
+/* Compact status strip: hidden on wide layouts (the rails carry it) */
+.cp-status-strip { display: none; }
 .cp-tutorial-text { font-size: 1.05rem; margin: 0; }
 
 /* ------------------------------------------------------------------ */
@@ -870,6 +872,21 @@ body.labels-on .layer-label { display: block; }
   .cp-play-layout { grid-template-columns: 1fr; }
   .screen-play .rail { display: none; }
   .cp-playfield { min-height: 48vh; }
+  .cp-status-strip {
+    display: flex; flex-wrap: wrap; gap: 0.25rem 0.9rem; align-items: center;
+    padding: 0.35rem calc(0.6rem + var(--sar)) 0.35rem calc(0.6rem + var(--sal));
+    font-size: 0.85rem; color: var(--ink-dim, inherit);
+    border-bottom: 1px solid var(--panel-border);
+  }
+  .cp-status-strip .danger { color: var(--danger, #e57373); }
+  .cp-strip-objective { font-weight: 600; margin-right: auto; }
+  /* the lesson card sits above the tray, never over it */
+  .cp-tutorial-card {
+    bottom: calc(4.4rem + var(--sab));
+    padding: 0.55rem 0.8rem;
+  }
+  .cp-tutorial-card .card-kicker { font-size: 0.7rem; }
+  .cp-tutorial-text { font-size: 0.92rem; }
 
   .cp-tray {
     display: flex;
@@ -923,6 +940,24 @@ body.labels-on .layer-label { display: block; }
   }
   .tray-btn { flex: 1; min-height: 44px; font-size: 0.8rem; }
   :root { --slot-h: clamp(1.1rem, 6vh, 1.8rem); --tube-w: clamp(2.2rem, 8vh, 3rem); }
+  /* timer / moves strip replaces the hidden right rail status */
+  .cp-status-strip {
+    display: flex; flex-wrap: wrap; gap: 0.2rem 0.8rem; align-items: center;
+    padding: 0.2rem calc(0.6rem + var(--sar)) 0.2rem calc(0.6rem + var(--sal));
+    font-size: 0.8rem; border-bottom: 1px solid var(--panel-border);
+  }
+  .cp-status-strip .danger { color: var(--danger, #e57373); }
+  .cp-strip-objective { font-weight: 600; margin-right: auto; }
+  /* lesson card docks left, above the tray, narrow enough to leave the board clear */
+  .cp-tutorial-card {
+    inset-inline: calc(0.5rem + var(--sal)) auto;
+    bottom: calc(3.6rem + var(--sab));
+    max-width: min(46vw, 22rem);
+    margin: 0;
+    padding: 0.45rem 0.7rem;
+  }
+  .cp-tutorial-card .card-kicker { font-size: 0.65rem; }
+  .cp-tutorial-text { font-size: 0.85rem; }
 }
 
 /* ------------------------------------------------------------------ */

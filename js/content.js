@@ -156,6 +156,7 @@ export const LESSONS = [
       {
         text: 'Now pour into the empty vessel. Empty glass accepts any color.',
         setup: L1_SETUP,
+        continues: true, // keeps the lifted vessel from the previous step
         require: { kind: 'pour', from: 0, to: 2 },
         hintText: 'With vessel 1 lifted, select the first empty vessel.',
       },

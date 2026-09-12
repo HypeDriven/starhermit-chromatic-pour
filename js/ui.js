@@ -1018,6 +1018,15 @@ export function createUI({ root, services }) {
     const canvasHost = el('div', { class: 'cp-canvas-host', 'aria-hidden': 'true' });
     const playfield = el('div', { class: 'cp-playfield' }, canvasHost, boardEl, skipBtn);
 
+    // Compact status strip: the objective / moves / timer that the rails
+    // carry on wide layouts, always visible on small screens.
+    const stripObjective = el('span', { class: 'cp-strip-objective', text: '' });
+    const stripMoves = el('span', { class: 'cp-strip-moves', text: '0 moves' });
+    const stripTimer = el('span', { class: 'cp-strip-timer', text: '0:00' });
+    const stripLimit = el('span', { class: 'cp-strip-limit', text: '', hidden: true });
+    const statusStrip = el('div', { class: 'cp-status-strip', role: 'status', 'aria-live': 'off' },
+      stripObjective, stripMoves, stripTimer, stripLimit);
+
     const tray = el('nav', { class: 'cp-tray', 'aria-label': 'Round actions' });
     // Tray clones mirror rail buttons so thumb-zone targets stay in sync.
     const trayUndo = cloneAction(undoBtn);
@@ -1028,11 +1037,13 @@ export function createUI({ root, services }) {
 
     s.append(
       el('h1', { class: 'sr-only', text: 'Playfield' }),
+      statusStrip,
       el('div', { class: 'cp-play-layout' }, leftRail, playfield, rightRail),
       tray);
 
     playRefs = {
       objectiveEl, progressEl, timerEl, movesEl, limitBadge,
+      stripObjective, stripMoves, stripTimer, stripLimit,
       undoBtn, hintBtn, restartBtn, pauseBtn, skipBtn,
       trayUndo, trayHint, trayPause, trayRestart,
       leftRail, rightRail, boardEl, canvasHost, playfield,
@@ -1076,6 +1087,8 @@ export function createUI({ root, services }) {
       const done = state.vessels.filter((v, i) => rules.isVesselComplete(state, i)).length;
       playRefs.progressEl.textContent = `Harmonized ${done} of ${state.vessels.length} vessels`;
       playRefs.movesEl.textContent = `${state.moves} move${state.moves === 1 ? '' : 's'}`;
+      playRefs.stripObjective.textContent = `${done}/${state.vessels.length} unified`;
+      playRefs.stripMoves.textContent = playRefs.movesEl.textContent;
       const c = state.constraints || {};
       if (c.moveLimit) {
         playRefs.limitBadge.hidden = false;
@@ -1087,6 +1100,9 @@ export function createUI({ root, services }) {
       } else {
         playRefs.limitBadge.hidden = true;
       }
+      playRefs.stripLimit.hidden = playRefs.limitBadge.hidden;
+      playRefs.stripLimit.textContent = playRefs.limitBadge.textContent;
+      playRefs.stripLimit.classList.toggle('danger', playRefs.limitBadge.classList.contains('danger'));
     }
     syncActionStates();
     if (audio && state) {
@@ -1105,6 +1121,8 @@ export function createUI({ root, services }) {
       const remaining = limit - elapsed;
       playRefs.timerEl.textContent = `−${fmtTime(Math.max(0, remaining))}`;
       playRefs.timerEl.classList.toggle('danger', remaining < 15000);
+      playRefs.stripTimer.textContent = playRefs.timerEl.textContent;
+      playRefs.stripTimer.classList.toggle('danger', remaining < 15000);
       if (!timeWarned && remaining < 15000 && remaining > 0 && state.status === 'active' && currentState === 'active') {
         timeWarned = true;
         audio?.play('time-warning');
@@ -1113,6 +1131,8 @@ export function createUI({ root, services }) {
     } else {
       playRefs.timerEl.textContent = fmtTime(elapsed);
       playRefs.timerEl.classList.remove('danger');
+      playRefs.stripTimer.textContent = playRefs.timerEl.textContent;
+      playRefs.stripTimer.classList.remove('danger');
     }
   }
 
@@ -2145,6 +2165,7 @@ export function createUI({ root, services }) {
       const r = getRenderer();
       if (r) { try { r.setState(state); } catch { /* decorative */ } }
     }
+    updateHud();
     showTutorialCard();
     focusVesselButton(firstPlayableVessel());
   }
@@ -2244,6 +2265,12 @@ export function createUI({ root, services }) {
     audio?.play('layer-complete');
     tutorial.stepIndex += 1;
     const step = currentStep();
+    if (step && step.continues && session) {
+      // The next instruction builds on the current board and selection.
+      showTutorialCard();
+      platform.telemetry('tutorial-step', { lesson: tutorial.lesson.id, step: tutorial.stepIndex });
+      return;
+    }
     if (step) {
       // Next step gets its own seeded board.
       levelDef = lessonLevel(tutorial.lesson, step, tutorial.stepIndex);
