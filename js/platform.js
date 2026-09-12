@@ -20,6 +20,8 @@ const TIMEOUT_MS = 6000;
 const HEARTBEAT_MIN_MS = 25000;
 const TELEMETRY_FLUSH_MS = 10000;
 const TELEMETRY_QUEUE_MAX = 100;
+const REFRESH_MS = 45 * 60 * 1000; // token lives 60 min; re-mint at 45
+const RETRY_MS = 60 * 1000;        // failed refresh retry
 const ALLOWED_TELEMETRY = new Set([
   'start', 'tutorial-step', 'round-end', 'retry', 'settings-change', 'error',
 ]);
@@ -93,6 +95,8 @@ export async function initPlatform(opts = {}) {
   let offset = 0;
   let sessionActive = false;
   let lastHeartbeat = 0;
+  let refreshTimer = null;
+  let refreshRetryTimer = null;
   const telemetryQueue = [];
   let flushTimer = null;
 
@@ -125,6 +129,34 @@ export async function initPlatform(opts = {}) {
 
   function serverNow() {
     return Date.now() + offset;
+  }
+
+  // Token refresh: scoped tokens may re-mint via the game's launch-token
+  // route. Runs every 45 min while hosted; a failed re-mint retries ~60 s.
+  async function refreshToken() {
+    if (!token || !scope) return false;
+    try {
+      const r = await apiFetch(`/api/v1/games/${encodeURIComponent(scope)}/launch-token`, { method: 'POST' });
+      if (r.status >= 200 && r.status < 300 && r.json && typeof r.json.token === 'string' && r.json.token) {
+        token = r.json.token; // memory only
+        const claims = decodeJwtPayload(token);
+        if (claims && typeof claims.sub === 'string' && claims.sub) userId = claims.sub;
+        if (claims && typeof claims.game_scope === 'string' && claims.game_scope) scope = claims.game_scope;
+        return true;
+      }
+    } catch { /* fall through to the retry */ }
+    if (!refreshRetryTimer) {
+      refreshRetryTimer = setTimeout(() => {
+        refreshRetryTimer = null;
+        refreshToken();
+      }, RETRY_MS);
+    }
+    return false;
+  }
+
+  function scheduleRefresh() {
+    if (refreshTimer) clearInterval(refreshTimer);
+    refreshTimer = setInterval(() => { refreshToken(); }, REFRESH_MS);
   }
 
   async function syncTime() {
@@ -165,7 +197,9 @@ export async function initPlatform(opts = {}) {
       } catch { /* retry */ }
       if (attempt < 2) await new Promise((res) => setTimeout(res, 400 * (attempt + 1)));
     }
-    const name = p && (p.nickname || p.username);
+    // Nickname only — never the raw username (wiki); fall back to a neutral
+    // shortened id when the profile has no nickname.
+    const name = p && typeof p.nickname === 'string' && p.nickname ? p.nickname : null;
     if (name) {
       profile = {
         displayName: String(name).slice(0, 40),
@@ -288,14 +322,11 @@ export async function initPlatform(opts = {}) {
   }
 
   async function signIn() {
-    if (!hosted) return { error: 'offline' };
-    try {
-      const next = encodeURIComponent(window.location.pathname + window.location.search + window.location.hash);
-      window.location.href = '/auth/login?next=' + next;
-      return { ok: true };
-    } catch {
-      return { error: 'unavailable' };
-    }
+    // No platform login route exists for games (wiki): sign-in happens in
+    // the host shell before launch. Say so honestly instead of redirecting
+    // to a fabricated /auth/login path.
+    if (!hosted) return { error: 'offline', note: 'Launch the game from the platform to sign in.' };
+    return { ok: true, note: 'Already signed in via the platform launch.' };
   }
 
   // Durable achievement delivery; the server stores unlocks idempotently.
@@ -313,6 +344,7 @@ export async function initPlatform(opts = {}) {
   const platform = {
     hosted, scope, userId, profile,
     serverNow, syncTime,
+    refreshToken,
     fetchProfile, onProfile,
     activityStart, activityEnd, heartbeat,
     submitScore, fetchLeaderboard,
@@ -322,7 +354,9 @@ export async function initPlatform(opts = {}) {
   if (hosted) {
     // Clock sync and profile lookup run together; the profile is given a short
     // budget here so boot is never held up — a late answer still lands via
-    // onProfile listeners.
+    // onProfile listeners. The scoped token re-mints every 45 min (60-min
+    // lifetime) with a ~60 s retry after a failed re-mint.
+    scheduleRefresh();
     const profileReady = fetchProfile().catch(() => profile);
     await Promise.all([
       syncTime().catch(() => {}),

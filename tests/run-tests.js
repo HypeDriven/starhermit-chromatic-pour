@@ -743,13 +743,13 @@ await testAsync('platform: #game_token launch shows the StarHermit nickname', as
   eq(timeCall?.headers.Authorization, `Bearer ${jwt}`, 'api calls carry the launch token');
 });
 
-await testAsync('platform: nickname falls back to username, then neutral id', async () => {
+await testAsync('platform: nickname only, never the username; neutral id fallback', async () => {
   const jwt = fakeJwt({ sub: USER_ID, game_scope: 'chromatic-pour' });
   const a = await withHost({ search: `?token=${jwt}` }, {
     '/api/v1/time': { status: 200, body: { epochMs: Date.now() } },
     [PROFILE_URL]: { status: 200, body: { id: USER_ID, username: 'albert_raw', nickname: '' } },
   });
-  eq(a.platform.profile?.displayName, 'albert_raw', 'username used when nickname is empty');
+  eq(a.platform.profile?.displayName, 'Player a1b2c3d4', 'neutral shortened id when the nickname is empty (username never displayed)');
   const b = await withHost({ search: `?token=${jwt}` }, {
     '/api/v1/time': { status: 200, body: { epochMs: Date.now() } },
     [PROFILE_URL]: { status: 403, body: { error: 'forbidden' } },
