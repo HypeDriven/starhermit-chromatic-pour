@@ -8,6 +8,12 @@
 // Section 1 — small DOM/format helpers
 // ---------------------------------------------------------------------------
 
+import {
+  PRESETS as GFX_PRESETS, CATEGORIES as GFX_CATEGORIES, resolve as resolveGraphics,
+  presetTier, choosePreset, describe as describeGraphics, pixelRatio as gfxPixelRatio, DEFAULT_GRAPHICS,
+} from './gfx.js';
+import { gfxStrings, pickLocale, fmt } from './gfx-strings.js';
+
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 function el(tag, attrs = {}, ...children) {
@@ -160,6 +166,10 @@ export function createUI({ root, services }) {
   const mountRenderer = services.mountRenderer || (async () => null);
   const clearRenderer = services.clearRenderer || (() => {});
   const updateRenderer = services.updateRenderer || (() => {});
+  const graphicsInfo = services.graphicsInfo || (() => ({ gpu: '', detected: 'balanced', webgl: isWebGL }));
+  const gfxLocale = pickLocale((typeof navigator !== 'undefined' && navigator.language) || 'en-US');
+  const GT = gfxStrings(gfxLocale);
+  if (!settings.graphics || typeof settings.graphics !== 'object') settings.graphics = { ...DEFAULT_GRAPHICS };
 
   // -- live settings normalization (bindings may be absent in older saves) --
   settings.bindings = Object.assign({}, DEFAULT_BINDINGS, settings.bindings || {});
@@ -227,6 +237,11 @@ export function createUI({ root, services }) {
     body.classList.toggle('left-handed', !!settings.leftHanded);
     body.classList.toggle('labels-on', !!settings.labelsOnLiquids);
     body.classList.toggle('no-webgl', !isWebGL);
+    // Graphics tiers the DOM layer honours (board glass detail, ambient motion).
+    const gfx = resolveGraphics(settings.graphics, graphicsInfo().detected);
+    body.dataset.gfxPreset = gfx.preset;
+    body.dataset.gfxDetail = gfx.detail;
+    body.dataset.gfxBackground = gfx.background;
 
     const theme = activeTheme();
     const style = document.documentElement.style;
@@ -457,11 +472,14 @@ export function createUI({ root, services }) {
 
     const titleArt = el('img', {
       class: 'cp-title-art', src: 'assets/title-art.webp', alt: '', 'aria-hidden': 'true',
-      decoding: 'async', onerror: () => { titleArt.hidden = true; },
+      decoding: 'async', onerror: () => { titleArt.hidden = true; titleFrame.hidden = true; },
     });
+    // Frame carries the 'detailed' candle-glow + rising-ember overlay (CSS only).
+    const titleFrame = el('div', { class: 'cp-title-art-frame' },
+      titleArt, el('span', { class: 'cp-title-embers', 'aria-hidden': 'true' }));
 
     s.append(
-      el('div', { class: 'cp-title-hero' }, titleArt, wordmark,
+      el('div', { class: 'cp-title-hero' }, titleFrame, wordmark,
         el('p', { class: 'cp-tagline', text: 'An alchemist’s sorting ritual. Pour every hue home.' }),
         playBtn,
         !isWebGL ? el('p', { class: 'cp-nowebgl', text: '3D shelf unavailable — playing in classic view.' }) : null),
@@ -1877,6 +1895,110 @@ export function createUI({ root, services }) {
 
   let remapCapture = null; // {action, button}
 
+  // Graphics panel: preset, render scale, per-effect overrides, adaptive
+  // resolution, frame-rate readout and a live cost summary. Strings follow
+  // navigator.language (gfx-strings.js). Every control has a stable id and a
+  // data-gfx attribute for tests.
+  let gfxSummaryTimer = 0;
+  function buildGraphicsSection(section, ...extra) {
+    const g = settings.graphics;
+    const info = graphicsInfo();
+    const detected = info.detected || 'balanced';
+    const r = resolveGraphics(g, detected);
+    const presetName = (p) => GT.preset[p] || p;
+    const tierName = (t) => GT.tier[t] || t;
+
+    const commit = (next, focusId) => {
+      settings.graphics = next;
+      setSetting('graphics', next);
+      const old = document.getElementById('gfx-section');
+      if (old) {
+        const fresh = buildGraphicsSection(section, ...extra);
+        old.replaceWith(fresh);
+        const f = focusId && document.getElementById(focusId);
+        if (f) f.focus({ preventScroll: true });
+      }
+    };
+
+    const presetSelect = el('select', { id: 'gfx-preset', 'data-gfx': 'preset', 'aria-label': GT.quality },
+      ['auto', ...GFX_PRESETS].map((p) => {
+        const opt = el('option', { value: p, text: p === 'auto' ? fmt(GT.auto, { tier: presetName(detected) }) : presetName(p) });
+        if ((g.preset || 'auto') === p) opt.selected = true;
+        return opt;
+      }));
+    presetSelect.addEventListener('change', () => commit(choosePreset(settings.graphics, presetSelect.value), 'gfx-preset'));
+
+    const pct = Math.round((Number(g.render_scale) || 1) * 100);
+    const scaleValue = el('span', { class: 'cp-slider-value', id: 'gfx-scale-value', text: `${pct}%` });
+    const scaleInput = el('input', {
+      type: 'range', id: 'gfx-scale', 'data-gfx': 'render_scale', min: '50', max: '200', step: '5',
+      value: String(pct), 'aria-label': GT.renderScale,
+    });
+    scaleInput.addEventListener('input', () => { scaleValue.textContent = `${scaleInput.value}%`; });
+    scaleInput.addEventListener('change', () => commit({ ...settings.graphics, render_scale: Number(scaleInput.value) / 100 }, 'gfx-scale'));
+
+    const catFields = Object.entries(GFX_CATEGORIES).map(([cat, tiers]) => {
+      const sel = el('select', { id: `gfx-${cat}`, 'data-gfx': cat, 'aria-label': GT.cat[cat] },
+        ['preset', ...tiers].map((t) => {
+          const opt = el('option', {
+            value: t,
+            text: t === 'preset' ? fmt(GT.fromPreset, { tier: tierName(presetTier(r.preset, cat)) }) : tierName(t),
+          });
+          if ((tiers.includes(g[cat]) ? g[cat] : 'preset') === t) opt.selected = true;
+          return opt;
+        }));
+      sel.addEventListener('change', () => {
+        const next = { ...settings.graphics };
+        if (sel.value === 'preset') delete next[cat]; else next[cat] = sel.value;
+        commit(next, `gfx-${cat}`);
+      });
+      return el('label', { class: 'cp-field' }, el('span', { text: GT.cat[cat] }), sel);
+    });
+
+    const check = (id, key, label, value) => {
+      const input = el('input', { type: 'checkbox', id, 'data-gfx': key, 'aria-label': label });
+      input.checked = value;
+      input.addEventListener('change', () => commit({ ...settings.graphics, [key]: input.checked }, id));
+      return el('label', { class: 'cp-field cp-toggle' }, el('span', { text: label }), input);
+    };
+
+    const summary = el('p', { class: 'cp-gfx-summary card-dim', id: 'gfx-summary', 'aria-live': 'polite' });
+    const note = el('p', { class: 'cp-gfx-note', id: 'gfx-note', hidden: true });
+    const refresh = () => {
+      const now = graphicsInfo();
+      let text;
+      if (now.summary) {
+        text = now.summary;
+      } else {
+        const pr = gfxPixelRatio(r, window.devicePixelRatio || 1);
+        text = describeGraphics(r, [Math.round(window.innerWidth * pr), Math.round(window.innerHeight * pr)]);
+      }
+      const fps = r.showFps && now.fps ? ` · ${now.fps} fps` : '';
+      summary.textContent = `${now.gpu || GT.unknownGpu} · ${text}${fps}`;
+      if (!isWebGL) { note.textContent = GT.noWebgl; note.hidden = false; }
+      else if (now.postFailed) { note.textContent = GT.postFailed; note.hidden = false; }
+      else note.hidden = true;
+    };
+    refresh();
+    clearInterval(gfxSummaryTimer);
+    gfxSummaryTimer = setInterval(() => {
+      if (!summary.isConnected) { clearInterval(gfxSummaryTimer); return; }
+      if (!screens.settings.hidden) refresh();
+    }, 1000);
+
+    const sec = section('Graphics',
+      el('label', { class: 'cp-field' }, el('span', { text: GT.quality }), presetSelect),
+      el('label', { class: 'cp-field' }, el('span', { text: GT.renderScale }), scaleInput, scaleValue),
+      el('div', { class: 'cp-gfx-grid' }, catFields),
+      check('gfx-adaptive', 'adaptive', GT.adaptive, g.adaptive !== false),
+      check('gfx-fps', 'show_fps', GT.showFps, !!g.show_fps),
+      summary, note,
+      ...extra);
+    sec.id = 'gfx-section';
+    sec.dataset.gfxPreset = r.preset;
+    return sec;
+  }
+
   function renderSettings() {
     const s = screens.settings;
     s.textContent = '';
@@ -1921,13 +2043,6 @@ export function createUI({ root, services }) {
       slider('Voice', 'voice', 'voice')));
 
     // -- Graphics --
-    const qualitySelect = el('select', { 'aria-label': 'Visual quality' },
-      ['auto', 'high', 'medium', 'low'].map((q) => {
-        const opt = el('option', { value: q, text: q[0].toUpperCase() + q.slice(1) });
-        if (settings.quality === q) opt.selected = true;
-        return opt;
-      }));
-    qualitySelect.addEventListener('change', () => setSetting('quality', qualitySelect.value));
     const themeSelect = el('select', { 'aria-label': 'Shelf theme' },
       (content.THEMES || []).map((t) => {
         const opt = el('option', { value: t.id, text: t.name || t.id });
@@ -1935,8 +2050,7 @@ export function createUI({ root, services }) {
         return opt;
       }));
     themeSelect.addEventListener('change', () => setSetting('theme', themeSelect.value));
-    s.append(section('Graphics',
-      el('label', { class: 'cp-field' }, el('span', { text: 'Visual quality' }), qualitySelect),
+    s.append(buildGraphicsSection(section,
       el('label', { class: 'cp-field' }, el('span', { text: 'Shelf theme' }), themeSelect),
       toggle('Reduced motion', 'reducedMotion'),
       toggle('Wide camera', 'cameraWide')));

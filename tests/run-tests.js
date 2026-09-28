@@ -7,6 +7,8 @@ import * as rules from '../js/rules.js';
 import { GameSession } from '../js/session.js';
 import { createRng } from '../js/rng.js';
 import * as storage from '../js/storage.js';
+import * as gfx from '../js/gfx.js';
+import { gfxStrings, pickLocale, GFX_LOCALES } from '../js/gfx-strings.js';
 import {
   CONTENT_VERSION, COLOR_SETS, THEMES, DIFFICULTIES, LESSONS, JOURNEY, CHALLENGES,
   dailyLevel, practiceLevel, buildLevelState, getLevelById, parFor, validateContent,
@@ -785,6 +787,79 @@ await testAsync('platform: late profile answer reaches onProfile listeners', asy
     delete globalThis.window;
   }
   eq(seen[0], 'Late Nick', 'listener received the resolved nickname');
+});
+
+// ---------------------------------------------------------------------------
+// 14. Graphics quality model (js/gfx.js) + panel strings
+// ---------------------------------------------------------------------------
+
+test('gfx: detectPreset maps GPU strings to presets; touch caps Auto at balanced', () => {
+  eq(gfx.detectPreset('ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero)), SwiftShader driver)'), 'low');
+  eq(gfx.detectPreset('llvmpipe (LLVM 15.0.7, 256 bits)'), 'low');
+  eq(gfx.detectPreset('ANGLE (NVIDIA, NVIDIA GeForce RTX 3070 Direct3D11 vs_5_0 ps_5_0)'), 'high');
+  eq(gfx.detectPreset('Apple M2 Pro'), 'high');
+  eq(gfx.detectPreset('ANGLE (Intel, Intel(R) UHD Graphics 620 Direct3D11)'), 'balanced');
+  eq(gfx.detectPreset('Adreno (TM) 730'), 'balanced');
+  eq(gfx.detectPreset(''), 'balanced');
+  eq(gfx.detectPreset('Apple M2 Pro', true), 'balanced', 'mobile cap');
+  eq(gfx.detectPreset('SwiftShader', true), 'low');
+});
+
+test('gfx: resolve uses detected preset for auto, explicit preset otherwise', () => {
+  const a = gfx.resolve({}, 'low');
+  eq(a.preset, 'low'); eq(a.auto, true); eq(a.shadows, 'off'); eq(a.post, false);
+  eq(a.adaptive, true); eq(a.showFps, false);
+  const h = gfx.resolve({ preset: 'high' }, 'low');
+  eq(h.preset, 'high'); eq(h.auto, false); eq(h.shadows, 'medium'); eq(h.ao, 'on'); eq(h.post, true);
+  eq(gfx.resolve({ preset: 'bogus' }, 'nonsense').preset, 'balanced', 'bad input falls back');
+});
+
+test('gfx: overrides win over the preset; invalid tiers are ignored', () => {
+  const r = gfx.resolve({ preset: 'low', bloom: 'on', shadows: 'sideways', detail: 'detailed' }, 'low');
+  eq(r.bloom, 'on'); eq(r.shadows, 'off'); eq(r.detail, 'detailed');
+  eq(r.post, true, 'bloom override turns the post chain on');
+  eq(gfx.presetTier('high', 'antialias'), 'smaa');
+  eq(gfx.presetTier('ultra', 'shadows'), 'high');
+});
+
+test('gfx: render scale is clamped to 50–200% and multiplies the preset scale', () => {
+  eq(gfx.resolve({ preset: 'high', render_scale: 5 }, 'low').scale, 2);
+  eq(gfx.resolve({ preset: 'high', render_scale: 0.1 }, 'low').scale, 0.5);
+  eq(gfx.resolve({ preset: 'ultra', render_scale: 1 }, 'low').scale, 1.25);
+  const low = gfx.resolve({ preset: 'low' }, 'low');
+  eq(gfx.pixelRatio(low, 3), 1, 'Low caps the pixel ratio at 1');
+  eq(gfx.pixelRatio(gfx.resolve({ preset: 'high' }), 3, 0.6), 1.2, 'adaptive scale multiplies');
+});
+
+test('gfx: choosing a preset clears overrides but keeps scale/adaptive/fps', () => {
+  const next = gfx.choosePreset({ preset: 'high', bloom: 'off', shadows: 'high', render_scale: 1.5, show_fps: true }, 'low');
+  eq(next.preset, 'low'); eq(next.bloom, undefined); eq(next.shadows, undefined);
+  eq(next.render_scale, 1.5); eq(next.show_fps, true);
+  eq(gfx.choosePreset({}, 'nope').preset, 'auto');
+  eq(gfx.migrateQuality('medium').preset, 'balanced');
+  eq(gfx.migrateQuality('auto').preset, 'auto');
+});
+
+test('gfx: describe summarises cost and pixels', () => {
+  const d = gfx.describe(gfx.resolve({ preset: 'high' }), [1280, 720]);
+  assert(d.includes('1024² shadows') && d.includes('SMAA') && d.includes('1280×720 px'), d);
+  assert(gfx.describe(gfx.resolve({ preset: 'low' })).startsWith('no shadows'));
+});
+
+test('gfx strings: all nine locales cover every key; locale matching', () => {
+  const en = gfxStrings('en-US');
+  eq(GFX_LOCALES.length, 9);
+  for (const loc of GFX_LOCALES) {
+    const t = gfxStrings(loc);
+    for (const k of Object.keys(en)) assert(t[k], `${loc} missing ${k}`);
+    for (const cat of Object.keys(gfx.CATEGORIES)) {
+      assert(t.cat[cat], `${loc} missing category ${cat}`);
+      for (const tier of gfx.CATEGORIES[cat]) assert(t.tier[tier], `${loc} missing tier ${tier}`);
+    }
+    for (const p of gfx.PRESETS) assert(t.preset[p], `${loc} missing preset ${p}`);
+  }
+  eq(pickLocale('es-MX'), 'es-419'); eq(pickLocale('fr-CA'), 'fr-CA'); eq(pickLocale('fr'), 'fr-FR');
+  eq(pickLocale('pt-PT'), 'pt-BR'); eq(pickLocale('en-AU'), 'en-GB'); eq(pickLocale('ja-JP'), 'en-US');
 });
 
 // ---------------------------------------------------------------------------

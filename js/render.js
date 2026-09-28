@@ -6,7 +6,20 @@
 // assets: every texture/geometry is procedural and decor is seeded.
 
 import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
+import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { decorStream } from './rng.js';
+import {
+  resolve as resolveGraphics, describe as describeGraphics, pixelRatio as gfxPixelRatio,
+  SHADOW_MAP, PARTICLE_BUDGET, MOTE_COUNT,
+} from './gfx.js';
 
 // ---------------------------------------------------------------------------
 // Framing / layout constants (authored; no magic inline offsets elsewhere)
@@ -66,13 +79,31 @@ const ANIM = {
   BURST_COUNT: 26,
 };
 
-const QUALITY = {
-  high:   { dpr: 2,   particles: 500, shadows: true,  shadowRadius: 2, glass: 'physical' },
-  medium: { dpr: 1.5, particles: 250, shadows: true,  shadowRadius: 4, glass: 'physical' },
-  low:    { dpr: 1,   particles: 80,  shadows: false, shadowRadius: 1, glass: 'phong' },
-};
-
 const PARTICLE_MAX = 500;      // hard pool cap (desktop); tier budget may be lower
+const MOTE_MAX = 60;           // drifting dust motes in the candle light
+const ADAPT = { FRAMES: 90, SLOW_MS: 26, FAST_MS: 14, DOWN: 0.1, UP: 0.05, MIN: 0.6 };
+
+// Colour grade + vignette, applied after OutputPass (display-space in and out).
+const GradeShader = {
+  uniforms: { tDiffuse: { value: null }, uAmount: { value: 1.0 }, uVignette: { value: 0.3 } },
+  vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: `
+    uniform sampler2D tDiffuse; uniform float uAmount; uniform float uVignette;
+    varying vec2 vUv;
+    void main() {
+      vec4 src = texture2D(tDiffuse, vUv);
+      vec3 c = clamp(src.rgb, 0.0, 1.0);
+      // Gentle S-curve, a touch more saturation, warm highlights / cool shadows.
+      vec3 s = mix(c, c * c * (3.0 - 2.0 * c), 0.22);
+      float l = dot(s, vec3(0.299, 0.587, 0.114));
+      s = mix(vec3(l), s, 1.1);
+      s *= mix(vec3(0.95, 0.98, 1.06), vec3(1.05, 1.0, 0.94), smoothstep(0.15, 0.75, l));
+      c = mix(c, s, uAmount);
+      float d = length((vUv - 0.5) * vec2(1.15, 1.0));
+      c *= 1.0 - uVignette * smoothstep(0.3, 0.85, d);
+      gl_FragColor = vec4(c, src.a);
+    }`,
+};
 const TAP_DIST_PX = 8;
 const TAP_TIME_MS = 300;
 const MAX_DT_MS = 100;
@@ -176,6 +207,79 @@ function makeFlameTexture() {
   return tex;
 }
 
+// Soft round sprite for particles and motes (replaces square GL points).
+function makeDotTexture() {
+  const cv = document.createElement('canvas');
+  cv.width = 32; cv.height = 32;
+  const g = cv.getContext('2d');
+  const grad = g.createRadialGradient(16, 16, 0, 16, 16, 16);
+  grad.addColorStop(0, 'rgba(255,255,255,1)');
+  grad.addColorStop(0.35, 'rgba(255,255,255,0.75)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 32, 32);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+// Detailed wall: laid stone blocks with mortar, plaster wash and speckle,
+// plus a matching greyscale bump map (both seeded).
+function makeStoneTextures(bgHex, rng) {
+  const W = 512, H = 256;
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const g = cv.getContext('2d');
+  const bump = document.createElement('canvas');
+  bump.width = W; bump.height = H;
+  const b = bump.getContext('2d');
+  g.fillStyle = shade(bgHex, -0.55);
+  g.fillRect(0, 0, W, H);
+  b.fillStyle = '#202020';
+  b.fillRect(0, 0, W, H);
+  const rowH = 32;
+  for (let row = 0; row < H / rowH; row++) {
+    let x = row % 2 ? -rng.next() * 40 : -rng.next() * 20;
+    while (x < W) {
+      const w = 56 + rng.next() * 60;
+      const tone = (rng.next() - 0.5) * 0.14 - 0.04;
+      g.fillStyle = shade(bgHex, tone);
+      g.fillRect(x + 2, row * rowH + 2, w - 4, rowH - 4);
+      const v = 150 + Math.floor(rng.next() * 60);
+      b.fillStyle = `rgb(${v},${v},${v})`;
+      b.fillRect(x + 2, row * rowH + 2, w - 4, rowH - 4);
+      // bevelled top edge catches the key light
+      g.fillStyle = 'rgba(255,230,200,0.035)';
+      g.fillRect(x + 2, row * rowH + 2, w - 4, 3);
+      x += w;
+    }
+  }
+  for (let i = 0; i < 2200; i++) { // speckle + pitting
+    const x = rng.next() * W, y = rng.next() * H;
+    const a = rng.next() * 0.12;
+    g.fillStyle = rng.next() < 0.5 ? `rgba(0,0,0,${a})` : `rgba(255,235,210,${a * 0.6})`;
+    g.fillRect(x, y, 1.5, 1.5);
+    b.fillStyle = `rgba(0,0,0,${a * 2})`;
+    b.fillRect(x, y, 2, 2);
+  }
+  // vertical plaster wash: brighter mid-band, darker floor
+  const wash = g.createLinearGradient(0, 0, 0, H);
+  wash.addColorStop(0, 'rgba(0,0,0,0.25)');
+  wash.addColorStop(0.45, 'rgba(255,220,180,0.04)');
+  wash.addColorStop(1, 'rgba(0,0,0,0.4)');
+  g.fillStyle = wash;
+  g.fillRect(0, 0, W, H);
+  const map = new THREE.CanvasTexture(cv);
+  map.colorSpace = THREE.SRGBColorSpace;
+  const bumpTex = new THREE.CanvasTexture(bump);
+  for (const t of [map, bumpTex]) {
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(6, 3);
+    t.anisotropy = 4;
+  }
+  return { map, bump: bumpTex };
+}
+
 // ---------------------------------------------------------------------------
 // Accessibility shape badges: cached extruded geometry per shape token
 // ---------------------------------------------------------------------------
@@ -260,6 +364,26 @@ function badgeGeometry(name) {
 // Capability probe
 // ---------------------------------------------------------------------------
 
+// One-shot probe: WebGL support plus the unmasked GPU name (for Auto quality).
+// Firefox exposes the real renderer via RENDERER and warns on the debug
+// extension, so the extension is only queried elsewhere.
+export function probeGpu() {
+  try {
+    const cv = document.createElement('canvas');
+    const gl = cv.getContext('webgl2') || cv.getContext('webgl');
+    if (!gl) return { available: false, gpu: '' };
+    let gpu = '';
+    const firefox = /firefox/i.test(navigator.userAgent || '');
+    const ext = firefox ? null : gl.getExtension('WEBGL_debug_renderer_info');
+    gpu = String(ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER) || '');
+    const lose = gl.getExtension('WEBGL_lose_context');
+    if (lose) lose.loseContext();
+    return { available: true, gpu };
+  } catch (_) {
+    return { available: false, gpu: '' };
+  }
+}
+
 export function isWebGLAvailable() {
   try {
     const cv = document.createElement('canvas');
@@ -274,14 +398,17 @@ export function isWebGLAvailable() {
 // Renderer factory
 // ---------------------------------------------------------------------------
 
-export async function createRenderer({ canvas, container, theme, paletteColors, decorSeed, settings = {}, onVesselPick }) {
+export async function createRenderer({ canvas, container, theme, paletteColors, decorSeed, settings = {}, graphics = {}, detectedPreset = 'balanced', gpu = '', onVesselPick }) {
+  // Initial graphics tiers; canvas MSAA is a context attribute, so it is chosen
+  // here (post-processing chains carry their own MSAA/FXAA/SMAA and apply live).
+  let gfx = resolveGraphics(graphics, detectedPreset);
   const renderer = new THREE.WebGLRenderer({
-    canvas, antialias: true, alpha: false, powerPreference: 'high-performance',
+    canvas, antialias: gfx.antialias === 'msaa' && !gfx.post, alpha: false, powerPreference: 'high-performance',
   });
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.1;   // conservative; liquid hues stay separable
-  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.enabled = SHADOW_MAP[gfx.shadows] > 0;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
   const scene = new THREE.Scene();
@@ -296,11 +423,21 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
   // renderer draws only the environment (shelf, props, lights, particles) and
   // scene-level celebrations — no 3D vessels, markers, or canvas picking.
   const ambientOnly = !!settings.ambientOnly;
-  let qualityName = QUALITY[settings.quality] ? settings.quality : 'high';
-  let cssW = 1, cssH = 1, dprRaw = 1;
+  let cssW = 1, cssH = 1, dprRaw = window.devicePixelRatio || 1;
+  let pixelRatioNow = 1;
+  let adaptiveScale = 1;
+  const frameTimes = [];
+  let fpsNow = 0;
+  let composer = null;
+  let gradePass = null;
+  let postKey = null;
+  let postFailed = false;
+  let pmrem = null;
+  let envTex = null;
   let paused = false;
   let disposed = false;
-  let timeMs = 0;                 // accumulated clock; decorative motion derives from this
+  let timeMs = 0;                 // accumulated clock; gameplay-adjacent motion derives from this
+  let ambMs = 0;                  // ambient decor clock (candle, orbs, motes)
   let lastState = null;
   let currentCapacity = 4;
   let selectedIndex = null;
@@ -324,18 +461,25 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
   const pointerNdc = new THREE.Vector2();
 
   // ---- lighting -------------------------------------------------------------
+  // Hemisphere fill (warm sky / dark wood bounce), a shadow-casting key light
+  // whose frustum is fitted to the two shelves and the wall behind them, and a
+  // cool rim light from behind-left.
   const warm = themeObj.ambience !== 'cool';
-  const ambient = new THREE.AmbientLight(warm ? 0xfff1e0 : 0xe8f0ff, 0.55);
+  const ambient = new THREE.HemisphereLight(warm ? 0xffe6c8 : 0xdde8ff, warm ? 0x2a1a10 : 0x101820, 0.9);
   scene.add(ambient);
   const keyLight = new THREE.DirectionalLight(warm ? 0xffd9a8 : 0xdceaff, 2.6);
   keyLight.position.set(4, 6.5, 5);
-  keyLight.castShadow = true;
+  keyLight.castShadow = SHADOW_MAP[gfx.shadows] > 0;
   keyLight.shadow.mapSize.set(1024, 1024);
-  keyLight.shadow.camera.left = -8; keyLight.shadow.camera.right = 8;
-  keyLight.shadow.camera.top = 8; keyLight.shadow.camera.bottom = -4;
-  keyLight.shadow.camera.near = 1; keyLight.shadow.camera.far = 22;
-  keyLight.shadow.bias = -0.002;
+  keyLight.shadow.camera.left = -7.2; keyLight.shadow.camera.right = 7.2;
+  keyLight.shadow.camera.top = 4.2; keyLight.shadow.camera.bottom = -4.4;
+  keyLight.shadow.camera.near = 3; keyLight.shadow.camera.far = 19;
+  keyLight.shadow.bias = -0.0015;
+  keyLight.shadow.normalBias = 0.02;
+  keyLight.shadow.radius = 3;
   scene.add(keyLight);
+  scene.add(keyLight.target);
+  keyLight.target.position.set(0, -0.6, -1.2);
   const rimLight = new THREE.DirectionalLight(warm ? 0x9fb8ff : 0xffe9c8, 0.9);
   rimLight.position.set(-5, 3.5, -4);
   scene.add(rimLight);
@@ -347,23 +491,73 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
   scene.add(envGroup);
 
   let wallTex = makeWallTexture(themeObj.bg);
+  let stoneTex = null; // built lazily for the 'detailed' tier
   const wallMat = new THREE.MeshStandardMaterial({ map: wallTex, roughness: 0.95, metalness: 0 });
+  wallMat.userData.envI = 0.04;
   const wall = new THREE.Mesh(new THREE.PlaneGeometry(34, 18), wallMat);
   wall.position.set(0, 4.5, -4.5);
   wall.receiveShadow = true;
   envGroup.add(wall);
 
   const woodTex = makeWoodTexture(rng.fork('wood'));
-  const shelfMat = new THREE.MeshStandardMaterial({ map: woodTex, color: themeObj.shelf, roughness: 0.8, metalness: 0.05 });
+  const shelfMat = new THREE.MeshStandardMaterial({
+    map: woodTex, color: themeObj.shelf, roughness: 0.8, metalness: 0.05,
+  });
+  shelfMat.userData.envI = 0.3;
   const shelfGeo = new THREE.BoxGeometry(13, 0.28, 2.8);
   const shelfMain = new THREE.Mesh(shelfGeo, shelfMat);
   shelfMain.position.set(0, -0.14, 0); // top surface at y = 0
   shelfMain.receiveShadow = true;
+  shelfMain.castShadow = true;
   envGroup.add(shelfMain);
   const shelfLow = new THREE.Mesh(shelfGeo, shelfMat);
   shelfLow.position.set(0, -2.4, -0.2);
   shelfLow.receiveShadow = true;
   envGroup.add(shelfLow);
+
+  // 'detailed' tier: brass edge trim and corbels under both shelves.
+  const brassMat = new THREE.MeshStandardMaterial({ color: 0xb08038, metalness: 1, roughness: 0.38 });
+  brassMat.userData.envI = 0.6;
+  const detailGroup = new THREE.Group();
+  envGroup.add(detailGroup);
+  {
+    const trimGeo = new THREE.BoxGeometry(13.02, 0.035, 0.03);
+    for (const [y, z] of [[-0.03, 1.4], [-2.29, 1.2]]) {
+      const trim = new THREE.Mesh(trimGeo, brassMat);
+      trim.position.set(0, y, z);
+      detailGroup.add(trim);
+    }
+    const corbelGeo = new THREE.BoxGeometry(0.12, 0.7, 1.6);
+    for (const [x, y, z] of [[-5.6, -0.63, -0.5], [5.6, -0.63, -0.5], [-5.6, -2.89, -0.7], [5.6, -2.89, -0.7]]) {
+      const c = new THREE.Mesh(corbelGeo, shelfMat);
+      c.position.set(x, y, z);
+      c.castShadow = true;
+      c.receiveShadow = true;
+      detailGroup.add(c);
+    }
+  }
+
+  function applyDetail(on) {
+    detailGroup.visible = on;
+    if (on) {
+      if (!stoneTex) stoneTex = makeStoneTextures(themeObj.bg, rng.fork('stone'));
+      wallMat.map = stoneTex.map;
+      wallMat.bumpMap = stoneTex.bump;
+      wallMat.bumpScale = 2.2;
+      wallMat.roughness = 0.9;
+      shelfMat.bumpMap = woodTex;
+      shelfMat.bumpScale = 1.4;
+      shelfMat.roughness = 0.62;
+    } else {
+      wallMat.map = wallTex;
+      wallMat.bumpMap = null;
+      wallMat.roughness = 0.95;
+      shelfMat.bumpMap = null;
+      shelfMat.roughness = 0.8;
+    }
+    wallMat.needsUpdate = true;
+    shelfMat.needsUpdate = true;
+  }
 
   scene.background = new THREE.Color(themeObj.bg);
   scene.fog = new THREE.Fog(themeObj.fog, 12, 30); // gentle; vessels stay clear at max reframe distance
@@ -377,7 +571,11 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
   let orbMesh = null;
   let flameSprite = null;
   let candleLight = null;
+  let flameHalo = null;
   let flamePhase = 0;
+  let orbsPlaced = false;
+  const flaskLiquids = [];
+  const dotTex = makeDotTexture();
 
   function buildDecor() {
     // stacked books (instanced)
@@ -403,6 +601,7 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
     books.instanceMatrix.needsUpdate = true;
     if (books.instanceColor) books.instanceColor.needsUpdate = true;
     books.receiveShadow = true;
+    books.castShadow = true;
     decorGroup.add(books);
 
     // candle with flickering flame sprite (main shelf, right end)
@@ -410,9 +609,26 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
     flamePhase = candleRng.next() * 100;
     const candle = new THREE.Mesh(
       new THREE.CylinderGeometry(0.09, 0.115, 0.5, 14),
-      new THREE.MeshStandardMaterial({ color: 0xf2e6c8, roughness: 0.6 }));
+      new THREE.MeshPhysicalMaterial({
+        color: 0xf2e6c8, roughness: 0.55, sheen: 0.6, sheenColor: new THREE.Color(0xffd8a0),
+        emissive: 0xff9a40, emissiveIntensity: 0.05,
+      }));
     candle.position.set(4.5, 0.25, -0.75);
+    candle.castShadow = true;
     decorGroup.add(candle);
+    const dish = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.15, 0.04, 20), brassMat);
+    dish.position.set(4.5, 0.02, -0.75);
+    dish.castShadow = true;
+    dish.receiveShadow = true;
+    decorGroup.add(dish);
+    // soft halo around the flame (blooms under post-processing)
+    flameHalo = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: dotTex, color: warm ? 0xffa050 : 0xffc890, transparent: true, opacity: 0.35,
+      depthWrite: false, blending: THREE.AdditiveBlending,
+    }));
+    flameHalo.position.set(4.5, 0.64, -0.74);
+    flameHalo.scale.set(0.9, 0.9, 1);
+    decorGroup.add(flameHalo);
     flameSprite = new THREE.Sprite(new THREE.SpriteMaterial({
       map: flameTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
     }));
@@ -429,6 +645,8 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
     const scrollGeo = new THREE.CylinderGeometry(0.07, 0.07, 0.9, 12);
     for (let i = 0; i < 3; i++) {
       const sc = new THREE.Mesh(scrollGeo, scrollMat);
+      sc.castShadow = true;
+      sc.receiveShadow = true;
       sc.rotation.z = Math.PI / 2;
       sc.rotation.y = (scrollRng.next() - 0.5) * 0.4;
       sc.position.set(1.4 + i * 0.5, -2.26 + 0.07 + (i === 2 ? 0.13 : 0), -0.45 + scrollRng.next() * 0.2);
@@ -440,7 +658,46 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
       new THREE.CylinderGeometry(0.16, 0.12, 0.22, 12),
       new THREE.MeshStandardMaterial({ color: 0xa85f3c, roughness: 0.85 }));
     pot.position.set(-2.2, -2.26 + 0.11, -0.35);
+    pot.castShadow = true;
     decorGroup.add(pot);
+
+    // two stoppered specimen flasks on the lower shelf: clear glass that
+    // catches the room reflections, with a faintly glowing draught inside
+    const flaskRng = rng.fork('flasks');
+    const flaskGlass = new THREE.MeshPhysicalMaterial({
+      color: 0xffffff, roughness: 0.05, metalness: 0, transmission: 0.9, thickness: 0.2, ior: 1.45,
+      transparent: true, opacity: 0.55, clearcoat: 1, clearcoatRoughness: 0.05,
+      side: THREE.DoubleSide, depthWrite: false,
+    });
+    flaskGlass.userData.envI = 0.9;
+    const flaskPts = [];
+    for (let i = 0; i <= 10; i++) {
+      const a = -Math.PI / 2 + (i / 10) * Math.PI * 0.85;
+      flaskPts.push(new THREE.Vector2(Math.max(0.001, 0.26 * Math.cos(a)), 0.26 + 0.26 * Math.sin(a)));
+    }
+    flaskPts.push(new THREE.Vector2(0.07, 0.62), new THREE.Vector2(0.07, 0.78), new THREE.Vector2(0.085, 0.8));
+    const flaskGeo = new THREE.LatheGeometry(flaskPts, 24);
+    const draughtGeo = new THREE.SphereGeometry(0.23, 20, 12, 0, Math.PI * 2, Math.PI * 0.42, Math.PI * 0.58);
+    const corkMat = new THREE.MeshStandardMaterial({ color: 0x8a6440, roughness: 0.95 });
+    for (const [x, z] of [[-3.7, -0.2], [3.2, -0.45]]) {
+      const hue = flaskRng.next();
+      const liquid = new THREE.MeshStandardMaterial({
+        color: new THREE.Color().setHSL(hue, 0.7, 0.45), emissive: new THREE.Color().setHSL(hue, 0.8, 0.4),
+        emissiveIntensity: 0.6, roughness: 0.2,
+      });
+      const flask = new THREE.Group();
+      const draught = new THREE.Mesh(draughtGeo, liquid);
+      draught.position.y = 0.26;
+      const glassM = new THREE.Mesh(flaskGeo, flaskGlass);
+      glassM.castShadow = true;
+      const cork = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.06, 0.1, 12), corkMat);
+      cork.position.y = 0.82;
+      flask.add(draught, glassM, cork);
+      flask.position.set(x, -2.26, z);
+      flask.scale.setScalar(0.9 + flaskRng.next() * 0.3);
+      detailGroup.add(flask);
+      flaskLiquids.push(liquid);
+    }
     const leafMat = new THREE.MeshStandardMaterial({ color: 0x4d7a3a, roughness: 0.7 });
     const leafGeo = new THREE.ConeGeometry(0.05, 0.42, 6);
     for (let i = 0; i < 3; i++) {
@@ -454,7 +711,7 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
     const orbRng = rng.fork('orbs');
     orbMesh = new THREE.InstancedMesh(
       new THREE.SphereGeometry(0.09, 12, 10),
-      new THREE.MeshStandardMaterial({ color: 0x2a2438, emissive: themeObj.accent, emissiveIntensity: 1.1, roughness: 0.4 }),
+      new THREE.MeshStandardMaterial({ color: 0x2a2438, emissive: themeObj.accent, emissiveIntensity: 2.4, roughness: 0.4 }),
       6);
     for (let i = 0; i < 6; i++) {
       orbBase.push({
@@ -465,9 +722,43 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
         amp: 0.05 + orbRng.next() * 0.05,
       });
     }
+    orbMesh.castShadow = true;
     decorGroup.add(orbMesh);
   }
   buildDecor();
+
+  // ---- drifting motes in the candle light (count from the particles tier) ----
+  const motePos = new Float32Array(MOTE_MAX * 3);
+  const moteSeed = new Float32Array(MOTE_MAX * 4);
+  {
+    const mr = rng.fork('motes');
+    for (let i = 0; i < MOTE_MAX; i++) {
+      moteSeed[i * 4] = (mr.next() * 2 - 1) * 5.5;     // base x
+      moteSeed[i * 4 + 1] = -2.2 + mr.next() * 5.2;    // base y
+      moteSeed[i * 4 + 2] = -3.6 + mr.next() * 4.4;   // base z
+      moteSeed[i * 4 + 3] = mr.next() * 1000;          // phase
+    }
+  }
+  const moteGeo = new THREE.BufferGeometry();
+  moteGeo.setAttribute('position', new THREE.BufferAttribute(motePos, 3));
+  const motes = new THREE.Points(moteGeo, new THREE.PointsMaterial({
+    size: 0.05, map: dotTex, color: warm ? 0xffc890 : 0xcfe4ff, transparent: true, opacity: 0.55,
+    depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true,
+  }));
+  motes.frustumCulled = false;
+  motes.layers.set(1);
+  scene.add(motes);
+  function updateMotes(tS) {
+    const n = moteGeo.drawRange.count;
+    for (let i = 0; i < n; i++) {
+      const ph = moteSeed[i * 4 + 3];
+      const rise = ((tS * 0.06 + ph * 0.37) % 5.2);
+      motePos[i * 3] = moteSeed[i * 4] + Math.sin(tS * 0.3 + ph) * 0.35;
+      motePos[i * 3 + 1] = -2.2 + ((moteSeed[i * 4 + 1] + 2.2 + rise) % 5.2);
+      motePos[i * 3 + 2] = moteSeed[i * 4 + 2] + Math.cos(tS * 0.23 + ph) * 0.25;
+    }
+    moteGeo.attributes.position.needsUpdate = true;
+  }
 
   // ---- bounded pooled particles (THREE.Points, layer 1) ---------------------
   const pPos = new Float32Array(PARTICLE_MAX * 3);
@@ -481,7 +772,7 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
   pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
   pGeo.setAttribute('color', new THREE.BufferAttribute(pCol, 3));
   const points = new THREE.Points(pGeo, new THREE.PointsMaterial({
-    size: 0.07, vertexColors: true, transparent: true, opacity: 0.9,
+    size: 0.09, map: dotTex, vertexColors: true, transparent: true, opacity: 0.95,
     depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true,
   }));
   points.frustumCulled = false;
@@ -489,7 +780,7 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
   scene.add(points);
   let pCursor = 0;
   let pAlive = 0;
-  let pBudget = QUALITY[qualityName].particles;
+  let pBudget = PARTICLE_BUDGET[gfx.particles];
   const tmpColor = new THREE.Color();
 
   function spawnParticle(x, y, z, vx, vy, vz, lifeMs, colorHex, grav) {
@@ -535,7 +826,7 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
   // ---- shared gameplay materials / geometries --------------------------------
   const glassPhysMat = new THREE.MeshPhysicalMaterial({
     color: 0xffffff, metalness: 0, roughness: 0.08, transmission: 0.92,
-    thickness: 0.35, ior: 1.5, side: THREE.DoubleSide,
+    thickness: 0.35, ior: 1.5, side: THREE.DoubleSide, clearcoat: 1, clearcoatRoughness: 0.06,
   });
   const glassPhongMat = new THREE.MeshPhongMaterial({
     color: 0xcfd8e6, transparent: true, opacity: 0.22, shininess: 90,
@@ -605,7 +896,7 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
     const body = new THREE.Group();
     root.add(body);
 
-    const glass = new THREE.Mesh(glassGeo, qualityName === 'low' ? glassPhongMat : glassPhysMat);
+    const glass = new THREE.Mesh(glassGeo, gfx.detail === 'detailed' ? glassPhysMat : glassPhongMat);
     body.add(glass);
 
     const rim = new THREE.Mesh(rimGeo, rimMat);
@@ -630,7 +921,7 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
     for (let i = 0; i < 8; i++) { // pool for any reasonable capacity; visibility gated
       const lm = new THREE.Mesh(layerGeo, liquidMats[0] || new THREE.MeshStandardMaterial());
       lm.visible = false;
-      lm.castShadow = QUALITY[qualityName].shadows;
+      lm.castShadow = gfx.shadows !== 'off';
       liquidGroup.add(lm);
       layerMeshes.push(lm);
       const b = new THREE.Mesh(badgeGeometry('circle'), badgeMat);
@@ -1167,21 +1458,183 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
   canvas.addEventListener('pointercancel', onPointerCancel);
   canvas.addEventListener('lostpointercapture', onPointerCancel);
 
-  // ---- quality ------------------------------------------------------------------
-  function applyQuality(name) {
-    if (!QUALITY[name]) return;
-    qualityName = name;
-    const q = QUALITY[name];
-    pBudget = q.particles;
-    keyLight.castShadow = q.shadows;
-    keyLight.shadow.radius = q.shadowRadius;
-    for (const v of vesselViews) {
-      v.glass.material = q.glass === 'phong' ? glassPhongMat : glassPhysMat;
-      for (const lm of v.layerMeshes) lm.castShadow = q.shadows;
-    }
-    renderer.setPixelRatio(Math.min(dprRaw, q.dpr));
+  // ---- graphics settings (live) ---------------------------------------------
+  let motionOn = !reducedMotion;
+  function applyMotion() {
+    motionOn = !reducedMotion && gfx.background === 'animated';
   }
-  applyQuality(qualityName);
+
+  function applyReflections(on) {
+    if (on) {
+      if (!envTex) {
+        pmrem = pmrem || new THREE.PMREMGenerator(renderer);
+        const room = new RoomEnvironment(renderer);
+        envTex = pmrem.fromScene(room, 0.04).texture;
+        room.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
+      }
+      scene.environment = envTex;
+      // The room environment is far brighter than a candlelit shelf: diffuse
+      // props take only a hint of it; glass and brass keep more.
+      scene.traverse((o) => {
+        if (!o.material) return;
+        for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+          if ('envMapIntensity' in m) m.envMapIntensity = m.userData.envI ?? 0.15;
+        }
+      });
+    } else {
+      scene.environment = null;
+    }
+    brassMat.metalness = on ? 1 : 0.35;
+    brassMat.roughness = on ? 0.32 : 0.5;
+  }
+
+  function markMaterialsDirty() {
+    scene.traverse((o) => {
+      if (!o.material) return;
+      for (const m of Array.isArray(o.material) ? o.material : [o.material]) m.needsUpdate = true;
+    });
+  }
+
+  function setGraphics(saved, detected = detectedPreset) {
+    detectedPreset = detected || detectedPreset;
+    gfx = resolveGraphics(saved, detectedPreset);
+    const size = SHADOW_MAP[gfx.shadows];
+    renderer.shadowMap.enabled = size > 0;
+    keyLight.castShadow = size > 0;
+    if (size > 0 && keyLight.shadow.mapSize.x !== size) {
+      keyLight.shadow.mapSize.set(size, size);
+      if (keyLight.shadow.map) { keyLight.shadow.map.dispose(); keyLight.shadow.map = null; }
+    }
+    pBudget = PARTICLE_BUDGET[gfx.particles];
+    moteGeo.setDrawRange(0, MOTE_COUNT[gfx.particles]);
+    motes.visible = MOTE_COUNT[gfx.particles] > 0;
+    for (const v of vesselViews) {
+      v.glass.material = gfx.detail === 'detailed' ? glassPhysMat : glassPhongMat;
+      for (const lm of v.layerMeshes) lm.castShadow = size > 0;
+    }
+    applyDetail(gfx.detail === 'detailed');
+    applyReflections(gfx.reflections === 'on');
+    applyMotion();
+    adaptiveScale = 1;
+    frameTimes.length = 0;
+    postKey = null; // rebuild the post chain on the next frame
+    showFpsMeter(gfx.showFps);
+    markMaterialsDirty(); // shadow-map and environment changes need recompiles
+    updateSize(true);
+  }
+
+  // Legacy quality names still work ('high'|'medium'|'low').
+  function setQuality(name) {
+    const map = { high: 'high', medium: 'balanced', low: 'low', auto: 'auto' };
+    if (map[name]) setGraphics({ preset: map[name] });
+  }
+
+  function showFpsMeter(on) {
+    let meter = document.getElementById('cp-fps');
+    if (on && !meter) {
+      meter = document.createElement('div');
+      meter.id = 'cp-fps';
+      meter.className = 'cp-fps';
+      meter.setAttribute('aria-hidden', 'true');
+      meter.textContent = '— fps';
+      document.body.append(meter);
+    }
+    if (meter) meter.hidden = !on;
+  }
+
+  function buildPost(w, h) {
+    if (composer) { composer.dispose(); composer = null; }
+    gradePass = null;
+    if (!gfx.post || postFailed) return;
+    const pr = pixelRatioNow;
+    try {
+      const target = new THREE.WebGLRenderTarget(Math.max(1, w * pr), Math.max(1, h * pr), {
+        type: THREE.HalfFloatType, samples: gfx.antialias === 'msaa' ? 4 : 0,
+      });
+      const c = new EffectComposer(renderer, target);
+      c.setPixelRatio(pr);
+      c.setSize(w, h);
+      c.addPass(new RenderPass(scene, camera));
+      if (gfx.ao !== 'off') {
+        const ao = new GTAOPass(scene, camera, w * pr, h * pr);
+        ao.output = GTAOPass.OUTPUT.Default;
+        ao.blendIntensity = 0.75;
+        const hi = gfx.ao === 'high';
+        ao.updateGtaoMaterial({ radius: 0.45, distanceExponent: 1.4, thickness: 1.2, scale: 1.0, samples: hi ? 16 : 8 });
+        ao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: hi ? 6 : 4, rings: 2, samples: hi ? 16 : 8 });
+        c.addPass(ao);
+      }
+      if (gfx.bloom === 'on') {
+        // High threshold: only the flame, orbs and glowing draughts bloom.
+        c.addPass(new UnrealBloomPass(new THREE.Vector2(w, h), 0.6, 0.45, 0.9));
+      }
+      c.addPass(new OutputPass());
+      if (gfx.grade === 'on') {
+        gradePass = new ShaderPass(GradeShader);
+        c.addPass(gradePass);
+      }
+      if (gfx.antialias === 'smaa') c.addPass(new SMAAPass(w * pr, h * pr));
+      if (gfx.antialias === 'fxaa') {
+        const fxaa = new ShaderPass(FXAAShader);
+        fxaa.material.uniforms.resolution.value.set(1 / (w * pr), 1 / (h * pr));
+        c.addPass(fxaa);
+      }
+      composer = c;
+    } catch (_) {
+      // Post-processing is an enhancement: render directly and let the panel say so.
+      postFailed = true;
+      composer = null;
+    }
+  }
+
+  // Adaptive resolution: average ~90 frames; step down when slow, back up when fast.
+  function adapt(dt) {
+    frameTimes.push(dt);
+    if (frameTimes.length < ADAPT.FRAMES) return false;
+    let sum = 0;
+    for (const f of frameTimes) sum += f;
+    const avg = sum / frameTimes.length;
+    frameTimes.length = 0;
+    fpsNow = 1000 / Math.max(1, avg);
+    const meter = document.getElementById('cp-fps');
+    if (meter && !meter.hidden) meter.textContent = `${Math.round(fpsNow)} fps · ${Math.round(pixelRatioNow * 100) / 100}×`;
+    if (!gfx.adaptive) return false;
+    const before = adaptiveScale;
+    if (avg > ADAPT.SLOW_MS) adaptiveScale = Math.max(ADAPT.MIN, adaptiveScale - ADAPT.DOWN);
+    else if (avg < ADAPT.FAST_MS && adaptiveScale < 1) adaptiveScale = Math.min(1, adaptiveScale + ADAPT.UP);
+    return before !== adaptiveScale;
+  }
+
+  // Size from the canvas' own box (the playfield), never the window, so the
+  // scene is not stretched; pixel ratio = min(dpr, preset cap) × scale × adaptive.
+  function updateSize(force) {
+    const w = Math.max(1, Math.round(canvas.clientWidth || (container && container.clientWidth) || cssW));
+    const h = Math.max(1, Math.round(canvas.clientHeight || (container && container.clientHeight) || cssH));
+    const ratio = gfxPixelRatio(gfx, dprRaw, adaptiveScale);
+    if (!force && w === cssW && h === cssH && ratio === pixelRatioNow) return;
+    const sizeChanged = w !== cssW || h !== cssH;
+    cssW = w; cssH = h;
+    pixelRatioNow = ratio;
+    renderer.setPixelRatio(ratio);
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+    if (sizeChanged) frameCamera(false);
+  }
+
+  function graphicsInfo() {
+    return {
+      gpu,
+      detected: detectedPreset,
+      resolved: { ...gfx },
+      summary: describeGraphics(gfx, [Math.round(cssW * pixelRatioNow), Math.round(cssH * pixelRatioNow)]),
+      pixels: [Math.round(cssW * pixelRatioNow), Math.round(cssH * pixelRatioNow)],
+      fps: Math.round(fpsNow),
+      adaptiveScale: Math.round(adaptiveScale * 100) / 100,
+      postFailed,
+      postActive: !!composer,
+    };
+  }
 
   // ---- public API -----------------------------------------------------------------
 
@@ -1289,10 +1742,9 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
     if (lastState && !ambientOnly) applySnapshot(lastState);
   }
 
-  function setQuality(name) { applyQuality(name); }
-
   function setReducedMotion(flag) {
     reducedMotion = !!flag;
+    applyMotion();
     if (reducedMotion) { // cancel swoops/shakes immediately; timing logic preserved
       for (const v of vesselViews) { v.shakeT = -1; v.flashT = -1; }
       camFx.zoom = 1;
@@ -1307,7 +1759,10 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
     scene.fog.color.set(themeObj.fog);
     keyLight.color.set(w ? 0xffd9a8 : 0xdceaff);
     rimLight.color.set(w ? 0x9fb8ff : 0xffe9c8);
-    ambient.color.set(w ? 0xfff1e0 : 0xe8f0ff);
+    ambient.color.set(w ? 0xffe6c8 : 0xdde8ff);
+    ambient.groundColor.set(w ? 0x2a1a10 : 0x101820);
+    motes.material.color.set(w ? 0xffc890 : 0xcfe4ff);
+    if (flameHalo) flameHalo.material.color.set(w ? 0xffa050 : 0xffc890);
     if (candleLight) candleLight.color.set(w ? 0xffb060 : 0xffc890);
     shelfMat.color.set(themeObj.shelf);
     rimMat.color.set(themeObj.accent);
@@ -1319,9 +1774,9 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
     }
     const oldTex = wallTex;
     wallTex = makeWallTexture(themeObj.bg);
-    wallMat.map = wallTex;
-    wallMat.needsUpdate = true;
     if (oldTex) oldTex.dispose();
+    if (stoneTex) { stoneTex.map.dispose(); stoneTex.bump.dispose(); stoneTex = null; }
+    applyDetail(gfx.detail === 'detailed');
     ensureLiquidMats();
     if (lastState) applySnapshot(lastState);
   }
@@ -1340,13 +1795,11 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
     refreshMarkers();
   }
 
+  // The canvas is measured from its own box; w/h are only a fallback before layout.
   function resize(w, h, dpr) {
-    cssW = Math.max(1, w); cssH = Math.max(1, h);
-    dprRaw = dpr || 1;
-    renderer.setPixelRatio(Math.min(dprRaw, QUALITY[qualityName].dpr));
-    renderer.setSize(cssW, cssH, false);
-    camera.aspect = cssW / cssH;
-    camera.updateProjectionMatrix();
+    dprRaw = dpr || window.devicePixelRatio || 1;
+    if (!canvas.clientWidth) { cssW = Math.max(1, w || cssW); cssH = Math.max(1, h || cssH); }
+    updateSize(true);
     frameCamera(false); // instant re-fit; never a cumulative lerp
   }
 
@@ -1359,6 +1812,9 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
     if (dt <= 0) return;
     const dtS = dt / 1000;
     timeMs += dt;
+    if (motionOn) ambMs += dt; // ambient decor clock; frozen under reduced motion / static
+    if (adapt(dt)) updateSize(true);
+    else updateSize(false);
 
     // tweens (authored duration + easing, interruptible)
     for (let i = tweens.length - 1; i >= 0; i--) {
@@ -1425,21 +1881,31 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
 
     updateParticles(dtS);
 
-    // decorative candle flicker (seeded phase; derives from accumulated time)
+    // decorative candle flicker, orb bob, motes (seeded phases; ambient clock)
+    const a = ambMs;
     if (flameSprite) {
-      const f = 1 + 0.13 * Math.sin(timeMs * 0.013 + flamePhase) + 0.08 * Math.sin(timeMs * 0.0073 + flamePhase * 2);
+      const f = 1 + 0.13 * Math.sin(a * 0.013 + flamePhase) + 0.08 * Math.sin(a * 0.0073 + flamePhase * 2);
       flameSprite.scale.set(0.16 * f, 0.24 * (2 - f) * 0.5 + 0.12, 1);
-      flameSprite.material.opacity = 0.75 + 0.2 * Math.sin(timeMs * 0.011 + flamePhase);
-      if (candleLight) candleLight.intensity = 5 * (0.9 + 0.15 * Math.sin(timeMs * 0.012 + flamePhase)) * mood.dim;
+      flameSprite.material.opacity = 0.75 + 0.2 * Math.sin(a * 0.011 + flamePhase);
+      const flick = 0.9 + 0.15 * Math.sin(a * 0.012 + flamePhase);
+      if (candleLight) candleLight.intensity = 5 * flick * mood.dim;
+      if (flameHalo) flameHalo.material.opacity = 0.3 * flick * mood.dim;
     }
-    // hanging orb bob (instanced; matrices rewritten from base data, no allocation)
-    if (orbMesh) {
-      for (let i = 0; i < orbBase.length; i++) {
-        const o = orbBase[i];
-        tmpMat4.makeTranslation(o.x, o.y + Math.sin(timeMs * 0.0009 + o.phase) * o.amp, o.z);
-        orbMesh.setMatrixAt(i, tmpMat4);
+    if (motionOn || !orbsPlaced) {
+      orbsPlaced = true;
+      // hanging orb bob (instanced; matrices rewritten from base data, no allocation)
+      if (orbMesh) {
+        for (let i = 0; i < orbBase.length; i++) {
+          const o = orbBase[i];
+          tmpMat4.makeTranslation(o.x, o.y + Math.sin(a * 0.0009 + o.phase) * o.amp, o.z);
+          orbMesh.setMatrixAt(i, tmpMat4);
+        }
+        orbMesh.instanceMatrix.needsUpdate = true;
       }
-      orbMesh.instanceMatrix.needsUpdate = true;
+      if (motes.visible) updateMotes(a / 1000);
+      for (let i = 0; i < flaskLiquids.length; i++) {
+        flaskLiquids[i].emissiveIntensity = 0.55 + 0.15 * Math.sin(a * 0.0015 + i * 2.1);
+      }
     }
 
     // light dim for 'failed'
@@ -1454,6 +1920,23 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
     camera.position.set(pan.x, CAM.LOOK_Y + d * Math.sin(pitch) + pan.y, d * Math.cos(pitch));
     camera.lookAt(pan.x * 0.6, CAM.LOOK_Y + pan.y * 0.5, 0);
 
+    drawScene(dtS);
+  }
+
+  function drawScene(dtS) {
+    const key = gfx.post && !postFailed
+      ? [gfx.ao, gfx.bloom, gfx.grade, gfx.antialias, cssW, cssH, pixelRatioNow].join('|') : 'none';
+    if (key !== postKey) {
+      postKey = key;
+      buildPost(cssW, cssH);
+    }
+    if (composer) {
+      try { composer.render(dtS); return; } catch (_) {
+        postFailed = true;
+        composer.dispose();
+        composer = null;
+      }
+    }
     renderer.render(scene, camera);
   }
 
@@ -1487,22 +1970,32 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
     });
     for (const g of badgeGeoCache.values()) g.dispose();
     badgeGeoCache.clear();
+    if (composer) { composer.dispose(); composer = null; }
+    if (envTex) envTex.dispose();
+    if (pmrem) pmrem.dispose();
+    if (stoneTex) { stoneTex.map.dispose(); stoneTex.bump.dispose(); }
+    wallTex.dispose();
+    woodTex.dispose();
+    dotTex.dispose();
+    const meter = document.getElementById('cp-fps');
+    if (meter) meter.hidden = true;
     renderer.dispose();
   }
 
   const api = {
     setState, setSelected, previewTargets, showInvalid, playEvents, skip,
-    setQuality, setReducedMotion, setTheme, projectVessel, focusVessel,
+    setQuality, setGraphics, graphicsInfo, setReducedMotion, setTheme, projectVessel, focusVessel,
     resize, renderFrame, setPaused, dispose,
   };
 
-  // Prewarm: compile shaders and render one warm frame so play has no hitches.
+  // Prewarm: apply graphics, compile shaders and render one warm frame so play has no hitches.
+  setGraphics(graphics, detectedPreset);
   frameCamera(false);
   camera.position.set(0, CAM.LOOK_Y + camBase.dist * Math.sin(THREE.MathUtils.degToRad(CAM.PITCH_DEG)),
     camBase.dist * Math.cos(THREE.MathUtils.degToRad(CAM.PITCH_DEG)));
   camera.lookAt(0, CAM.LOOK_Y, 0);
   renderer.compile(scene, camera);
-  renderer.render(scene, camera);
+  drawScene(0);
 
   return api;
 }

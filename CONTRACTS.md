@@ -152,7 +152,9 @@ export const SETTINGS_DEFAULTS = {
   music:0.7, effects:0.9, ambience:0.5, voice:0.8,
   palette:'standard',            // key into COLOR_SETS
   theme:'ember',                 // theme id
-  quality:'auto',                // 'auto'|'high'|'medium'|'low'
+  // graphics:{preset:'auto'|'low'|'balanced'|'high'|'ultra', render_scale:0.5-2,
+  //   adaptive:bool, show_fps:bool, <category>:tier} — js/gfx.js; migrated from the old
+  //   quality:'auto'|'high'|'medium'|'low' key on first boot
   reducedMotion:false, largerText:false, highContrast:false, leftHanded:false,
   holdToConfirm:false, hintsEnabled:true, labelsOnLiquids:true,
   cameraWide:false, tutorialDone:false, telemetryConsent:false
@@ -190,7 +192,9 @@ audio = {
 
 ```js
 export function isWebGLAvailable() -> bool
-export async function createRenderer({canvas, container, theme, paletteColors, decorSeed, settings, onVesselPick}) -> renderer
+export function probeGpu() -> {available:bool, gpu:string}   // unmasked renderer name for Auto
+export async function createRenderer({canvas, container, theme, paletteColors, decorSeed, settings,
+  graphics, detectedPreset, gpu, onVesselPick}) -> renderer
 // settings.ambientOnly (set by main.js): environment-only mode — the semantic
 // DOM board is the playable surface, so the 3D scene draws the shelf
 // environment, lighting, particles, and scene-level celebrations, with vessel
@@ -202,11 +206,14 @@ renderer = {
   showInvalid(i, reason),               // shake + marker; explanation text is UI's job
   playEvents(events, {instant=false}) -> Promise,  // pour/win animations; resolves when settled
   skip(),                        // fast-forward: settle everything to exact logical state
-  setQuality('high'|'medium'|'low'), setReducedMotion(bool),
+  setGraphics(savedGraphics, detectedPreset),  // live: shadows, post chain, IBL, detail, motes, scale
+  graphicsInfo() -> {gpu, detected, resolved, summary, pixels, fps, adaptiveScale, postFailed, postActive},
+  setQuality('high'|'medium'|'low'),     // legacy alias → setGraphics({preset})
+  setReducedMotion(bool),
   setTheme(theme, paletteColors),
   projectVessel(i) -> {x,y}|null,        // CSS px, for DOM label alignment
   focusVessel(i|null),                   // keyboard/gamepad focus ring
-  resize(w,h,dpr), renderFrame(dtMs),    // main.js drives rAF loop
+  resize(w,h,dpr), renderFrame(dtMs),    // main.js drives rAF loop; size is measured from the canvas box
   setPaused(bool),                       // freeze decorative motion when hidden
   dispose()
 }

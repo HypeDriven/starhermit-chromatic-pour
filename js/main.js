@@ -1,12 +1,13 @@
 // main.js — Chromatic Pour bootstrap.
 // Boot sequence, capability detection, app state machine, rAF loop driving
-// the renderer, visibility/resize/orientation handling, quality stepping,
+// the renderer, visibility/resize/orientation handling, graphics settings,
 // platform activity lifecycle, and the global error surface. All DOM lives
 // in ui.js; this file stays thin.
 
 import * as rules from './rules.js';
 import { GameSession } from './session.js';
 import { createUI } from './ui.js';
+import { detectPreset, migrateQuality, DEFAULT_GRAPHICS } from './gfx.js';
 
 // ---------------------------------------------------------------------------
 // App state machine
@@ -58,8 +59,21 @@ let renderMod = null;
 let renderer = null;
 let webgl = false;
 let settings = null;
-let qualityTier = 'medium';
-let tierDroppedThisSession = false;
+let gpuName = '';
+let detectedPreset = 'balanced';
+
+function isTouchDevice() {
+  try {
+    const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+    const fine = window.matchMedia && window.matchMedia('(any-pointer: fine)').matches;
+    return !!coarse && !fine;
+  } catch { return false; }
+}
+
+function prefersReducedMotion() {
+  return !!(settings?.reducedMotion ||
+    (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches));
+}
 
 // Minimal offline platform — used only when platform.js is absent or its
 // 3 s init budget expires. Matches the contract surface; everything degrades.
@@ -112,16 +126,15 @@ async function mountRenderer({ canvas, container, theme, paletteColors, onVessel
       decorSeed: `chromatic-pour-${settings?.theme || 'ember'}`,
       // The semantic DOM board is the playable surface; the 3D scene provides
       // the alchemist-shelf environment, lighting, and celebrations around it.
-      settings: { ...settings, ambientOnly: true },
+      settings: { ...settings, reducedMotion: prefersReducedMotion(), ambientOnly: true },
+      graphics: settings?.graphics || {},
+      detectedPreset,
+      gpu: gpuName,
       onVesselPick,
     });
-    applyQualityTier();
-    renderer.setReducedMotion(!!settings?.reducedMotion);
-    const onResize = () => renderer && renderer.resize(window.innerWidth, window.innerHeight, window.devicePixelRatio || 1);
-    onResize();
+    renderer.resize(container?.clientWidth || window.innerWidth, container?.clientHeight || window.innerHeight, window.devicePixelRatio || 1);
     return renderer;
-  } catch (err) {
-    console.warn('[chromatic-pour] renderer creation failed', err);
+  } catch (_) {
     renderer = null;
     webgl = false;
     return null;
@@ -136,25 +149,16 @@ function updateRenderer({ settings: next } = {}) {
   if (next) settings = next;
   if (!renderer) return;
   try {
-    if (settings.quality !== 'auto') {
-      qualityTier = settings.quality;
-    }
-    applyQualityTier();
-    renderer.setReducedMotion(!!settings.reducedMotion);
+    renderer.setGraphics(settings.graphics || {}, detectedPreset);
+    renderer.setReducedMotion(prefersReducedMotion());
   } catch { /* renderer settings are best-effort */ }
 }
 
-function computeAutoTier() {
-  const dpr = window.devicePixelRatio || 1;
-  const desktopish = window.innerWidth >= 1024;
-  return dpr >= 2 && desktopish ? 'high' : 'medium';
-}
-
-function applyQualityTier() {
-  if (!renderer) return;
-  if (settings?.quality === 'auto') qualityTier = computeAutoTier();
-  else if (settings?.quality) qualityTier = settings.quality;
-  try { renderer.setQuality(qualityTier); } catch { /* best-effort */ }
+function graphicsInfo() {
+  if (renderer) {
+    try { return renderer.graphicsInfo(); } catch { /* fall through */ }
+  }
+  return { gpu: gpuName, detected: detectedPreset, webgl, postFailed: false, postActive: false };
 }
 
 // ---------------------------------------------------------------------------
@@ -199,12 +203,10 @@ function stopHeartbeat() {
 }
 
 // ---------------------------------------------------------------------------
-// rAF loop + FPS monitor (render scale before anything else)
+// rAF loop (adaptive resolution lives in the renderer)
 // ---------------------------------------------------------------------------
 
 let lastFrame = 0;
-let fpsFrames = 0;
-let fpsWindowStart = 0;
 
 function frame(now) {
   const dt = Math.min(100, Math.max(0, now - lastFrame));
@@ -213,32 +215,7 @@ function frame(now) {
     try { renderer.renderFrame(dt); } catch { /* a bad frame must not kill the loop */ }
   }
   if (ui) ui.tick(dt);
-  fpsMonitor(now);
   requestAnimationFrame(frame);
-}
-
-function fpsMonitor(now) {
-  if (currentState !== 'active' || !renderer || tierDroppedThisSession) {
-    fpsFrames = 0;
-    fpsWindowStart = now;
-    return;
-  }
-  if (!fpsWindowStart) fpsWindowStart = now;
-  fpsFrames += 1;
-  const elapsed = now - fpsWindowStart;
-  if (elapsed < 5000) return;
-  const avg = (fpsFrames * 1000) / elapsed;
-  fpsFrames = 0;
-  fpsWindowStart = now;
-  if (avg >= 45) return;
-  const order = ['high', 'medium', 'low'];
-  const idx = order.indexOf(qualityTier);
-  if (idx === -1 || idx >= order.length - 1) return;
-  qualityTier = order[idx + 1];
-  tierDroppedThisSession = true;
-  try { renderer.setQuality(qualityTier); } catch { /* best-effort */ }
-  if (ui) ui.notify(`The shelf was dropping frames, so visual quality stepped down to ${qualityTier}.`);
-  try { platform.telemetry('performance-tier', { tier: qualityTier, avgFps: Math.round(avg) }); } catch { /* best-effort */ }
 }
 
 // ---------------------------------------------------------------------------
@@ -265,7 +242,6 @@ function wireLifecycle() {
 
   const onResize = () => {
     try { renderer?.resize(window.innerWidth, window.innerHeight, window.devicePixelRatio || 1); } catch { /* best-effort */ }
-    if (settings?.quality === 'auto' && !tierDroppedThisSession) applyQualityTier();
   };
   window.addEventListener('resize', onResize);
   window.addEventListener('orientationchange', onResize);
@@ -318,6 +294,12 @@ async function boot() {
   } catch {
     settings = { ...(storage.SETTINGS_DEFAULTS || {}) };
   }
+  // Graphics presets replaced the old single 'quality' select; carry it over once.
+  if (!settings.graphics || typeof settings.graphics !== 'object') {
+    settings.graphics = migrateQuality(settings.quality);
+  } else {
+    settings.graphics = { ...DEFAULT_GRAPHICS, ...settings.graphics };
+  }
 
   // Platform handshake — never block boot longer than 3 s.
   try {
@@ -335,7 +317,10 @@ async function boot() {
   // WebGL capability + render module (decorative layer; absence is fine).
   try {
     renderMod = await import('./render.js');
-    webgl = !!renderMod.isWebGLAvailable();
+    const probe = renderMod.probeGpu();
+    webgl = probe.available;
+    gpuName = probe.gpu;
+    detectedPreset = detectPreset(gpuName, isTouchDevice());
   } catch (err) {
     console.warn('[chromatic-pour] render.js unavailable, classic view', err);
     renderMod = null;
@@ -377,6 +362,7 @@ async function boot() {
     mountRenderer,
     clearRenderer,
     updateRenderer,
+    graphicsInfo,
   };
 
   ui = createUI({ root: document.getElementById('app'), services });

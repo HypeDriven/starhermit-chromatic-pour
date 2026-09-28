@@ -992,3 +992,132 @@ body.reduced-motion *::after {
 }
 body.reduced-motion .vessel.invalid { animation: none; }
 body.reduced-motion .vessel.invalid .vessel-tube { box-shadow: 0 0 0 3px var(--danger); }
+
+/* ------------------------------------------------------------------ */
+/* Graphics tiers (body[data-gfx-*], set from js/gfx.js)               */
+/* ------------------------------------------------------------------ */
+
+.cp-title-art-frame { position: relative; width: min(100%, 56rem); margin: 0 auto 0.75rem; }
+.cp-title-art-frame[hidden] { display: none; }
+.cp-title-art-frame .cp-title-art { width: 100%; margin: 0; }
+.cp-title-embers { display: none; }
+
+/* Detailed: candle-warm light breathing over the key art and a few rising embers. */
+body[data-gfx-detail="detailed"] .cp-title-embers {
+  display: block;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: var(--radius);
+  mix-blend-mode: screen;
+  background:
+    radial-gradient(1.5px 1.5px at 12% 80%, rgba(255, 190, 110, 0.9), transparent 60%),
+    radial-gradient(2px 2px at 27% 60%, rgba(255, 170, 90, 0.8), transparent 60%),
+    radial-gradient(1.5px 1.5px at 46% 90%, rgba(255, 210, 140, 0.85), transparent 60%),
+    radial-gradient(2px 2px at 63% 70%, rgba(255, 180, 100, 0.8), transparent 60%),
+    radial-gradient(1.5px 1.5px at 81% 85%, rgba(255, 200, 130, 0.9), transparent 60%),
+    radial-gradient(2px 2px at 92% 55%, rgba(255, 170, 90, 0.7), transparent 60%),
+    radial-gradient(60% 80% at 50% 100%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 70%);
+  background-size: 100% 200%, 100% 200%, 100% 200%, 100% 200%, 100% 200%, 100% 200%, 100% 100%;
+  -webkit-mask-image: linear-gradient(180deg, #000 70%, transparent 100%);
+  mask-image: linear-gradient(180deg, #000 70%, transparent 100%);
+  opacity: 0.85;
+}
+body[data-gfx-detail="detailed"][data-gfx-background="animated"] .cp-title-embers {
+  animation: embers-rise 9s linear infinite, candle-breathe 3.7s ease-in-out infinite;
+}
+@keyframes embers-rise {
+  from { background-position: 0 0, 0 30%, 0 60%, 0 15%, 0 45%, 0 75%, 0 0; }
+  to { background-position: 0 -200%, 0 -170%, 0 -140%, 0 -185%, 0 -155%, 0 -125%, 0 0; }
+}
+@keyframes candle-breathe {
+  0%, 100% { opacity: 0.75; }
+  40% { opacity: 0.95; }
+  55% { opacity: 0.82; }
+}
+
+/* Detailed board: cylinder shading on liquids, a bright meniscus on the top
+   layer, a glass gloss streak and lip, and a slow caustic sweep. Hues stay
+   fully saturated in the centre of every band so colours remain readable. */
+body[data-gfx-detail="detailed"] .cp-board .vessel-tube,
+body[data-gfx-detail="detailed"] .vessel-tube.mini { position: relative; }
+body[data-gfx-detail="detailed"] .layer:not(.slot-empty) {
+  background:
+    linear-gradient(90deg, rgba(0, 0, 0, 0.26), rgba(255, 255, 255, 0.07) 28%, rgba(255, 255, 255, 0) 55%, rgba(0, 0, 0, 0.3)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.03) 35%, rgba(0, 0, 0, 0.18)),
+    var(--c, #666);
+  box-shadow: inset 0 0 10px color-mix(in srgb, var(--c, #666) 60%, transparent);
+}
+body[data-gfx-detail="detailed"] .layer:not(.slot-empty):has(+ .slot-empty)::before,
+body[data-gfx-detail="detailed"] .layer:not(.slot-empty):last-child::before {
+  content: '';
+  position: absolute;
+  inset: 0 6% auto;
+  height: 4px;
+  border-radius: 50%;
+  background: radial-gradient(50% 100% at 50% 50%, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0) 100%);
+  pointer-events: none;
+}
+body[data-gfx-detail="detailed"] .cp-board .vessel-tube::before {
+  content: '';
+  position: absolute;
+  z-index: 2;
+  top: 6px;
+  bottom: 14px;
+  left: 11%;
+  width: 11%;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0.12) 60%, rgba(255, 255, 255, 0));
+  pointer-events: none;
+}
+body[data-gfx-detail="detailed"] .cp-board .vessel-tube::after {
+  content: '';
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(115deg, transparent 35%, rgba(255, 255, 255, 0.10) 45%, transparent 55%);
+  background-size: 100% 300%;
+  background-position: 0 100%;
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.28), inset 0 -8px 14px rgba(0, 0, 0, 0.28);
+  pointer-events: none;
+}
+body[data-gfx-detail="detailed"][data-gfx-background="animated"] .cp-board .vessel-tube::after {
+  animation: glass-sweep 7s ease-in-out infinite;
+}
+body[data-gfx-detail="detailed"] .cp-board .vessel:nth-child(3n+1) .vessel-tube::after { animation-delay: -2.3s; }
+body[data-gfx-detail="detailed"] .cp-board .vessel:nth-child(3n+2) .vessel-tube::after { animation-delay: -4.6s; }
+@keyframes glass-sweep {
+  0%, 60% { background-position: 0 100%; }
+  100% { background-position: 0 -50%; }
+}
+body[data-gfx-detail="detailed"] .cp-board .vessel {
+  background: radial-gradient(46% 7% at 50% calc(100% - 1.45rem), rgba(0, 0, 0, 0.45), transparent 100%);
+}
+
+/* Graphics panel */
+.cp-gfx-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));
+  gap: 0.5rem 1.5rem;
+}
+.cp-gfx-grid .cp-field > span:first-child { min-width: min(10rem, 45%); flex: 1; }
+.cp-gfx-grid .cp-field select { max-width: 100%; }
+.cp-gfx-summary { font-family: var(--font-ui); font-size: 0.85rem; overflow-wrap: anywhere; margin: 0; }
+.cp-gfx-note { color: var(--danger); font-family: var(--font-ui); font-size: 0.85rem; margin: 0; }
+.cp-gfx-note[hidden] { display: none; }
+
+.cp-fps {
+  position: fixed;
+  z-index: 50;
+  top: calc(4rem + var(--sat));
+  inset-inline-end: calc(0.75rem + var(--sar));
+  padding: 0.2em 0.6em;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.55);
+  color: var(--ink);
+  font: 0.75rem/1.4 var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.cp-fps[hidden] { display: none; }

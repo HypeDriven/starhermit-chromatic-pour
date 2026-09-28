@@ -11,7 +11,7 @@ export const SETTINGS_DEFAULTS = {
   music: 0.7, effects: 0.9, ambience: 0.5, voice: 0.8,
   palette: 'standard',
   theme: 'ember',
-  quality: 'auto',
+  // graphics: {preset, render_scale, adaptive, show_fps, <category>} — see gfx.js; added on first boot.
   reducedMotion: false, largerText: false, highContrast: false, leftHanded: false,
   holdToConfirm: false, hintsEnabled: true, labelsOnLiquids: true,
   cameraWide: false, tutorialDone: false, telemetryConsent: false,

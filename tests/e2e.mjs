@@ -209,7 +209,7 @@ async function runPass(browser, vpName, contextOpts) {
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
-  page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
+  page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errors.push(`console ${m.type()}: ${m.text()}`); });
 
   try {
     await step(`[${vpName}] load + title visible`, async () => {
@@ -227,6 +227,47 @@ async function runPass(browser, vpName, contextOpts) {
         throw new Error('settings heading missing');
       }
       await page.screenshot({ path: SHOT('settings', vpName) });
+      await page.locator('#screen-settings button', { hasText: 'Back' }).last().click();
+      await page.waitForSelector('#screen-title:not([hidden])');
+    });
+
+    await step(`[${vpName}] settings → Graphics: presets, override, persistence`, async () => {
+      const openGraphics = async () => {
+        await page.locator('#screen-title .cp-title-nav button', { hasText: 'Settings' }).click();
+        await page.waitForSelector('#screen-settings:not([hidden]) #gfx-section');
+      };
+      await openGraphics();
+      const autoLabel = await page.locator('#gfx-preset option[value="auto"]').textContent();
+      if (!/Auto \(detected: Low\)/.test(autoLabel)) throw new Error(`software GPU should detect Low, got "${autoLabel}"`);
+      if ((await page.getAttribute('body', 'data-gfx-preset')) !== 'low') throw new Error('Auto did not resolve to Low');
+      await page.locator('#gfx-preset').selectOption('low');
+      await page.waitForFunction(() => document.body.dataset.gfxPreset === 'low' && document.getElementById('gfx-section')?.dataset.gfxPreset === 'low');
+      await page.locator('#gfx-preset').selectOption('high');
+      await page.waitForFunction(() => document.body.dataset.gfxPreset === 'high' && document.body.dataset.gfxDetail === 'detailed');
+      const bloomDefault = await page.locator('#gfx-bloom option[value="preset"]').textContent();
+      if (!/From preset \(On\)/.test(bloomDefault)) throw new Error(`bloom preset label: "${bloomDefault}"`);
+      if (!/1024² shadows/.test(await page.locator('#gfx-summary').textContent())) throw new Error('summary does not show High shadows');
+      await page.locator('#gfx-detail').selectOption('plain');
+      await page.waitForFunction(() => document.body.dataset.gfxDetail === 'plain');
+      await page.locator('#gfx-fps').check();
+      await page.locator('#gfx-section').scrollIntoViewIfNeeded();
+      await page.screenshot({ path: SHOT('settings-graphics', vpName), fullPage: true });
+      // Panel must not overflow horizontally at this viewport.
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      if (overflow > 1) throw new Error(`settings page overflows horizontally by ${overflow}px`);
+      await page.reload({ waitUntil: 'load' });
+      await page.waitForSelector('#screen-title:not([hidden])', { timeout: 15000 });
+      if ((await page.getAttribute('body', 'data-gfx-preset')) !== 'high') throw new Error('High preset lost on reload');
+      if ((await page.getAttribute('body', 'data-gfx-detail')) !== 'plain') throw new Error('detail override lost on reload');
+      await openGraphics();
+      if ((await page.locator('#gfx-preset').inputValue()) !== 'high') throw new Error('preset select not restored');
+      if ((await page.locator('#gfx-detail').inputValue()) !== 'plain') throw new Error('override select not restored');
+      if (!(await page.locator('#gfx-fps').isChecked())) throw new Error('show-fps not restored');
+      // Choosing a preset clears overrides; go back to Auto (Low here) for the rest of the run.
+      await page.locator('#gfx-preset').selectOption('auto');
+      await page.waitForFunction(() => document.body.dataset.gfxPreset === 'low' && document.body.dataset.gfxDetail === 'plain');
+      if ((await page.locator('#gfx-detail').inputValue()) !== 'preset') throw new Error('preset change did not clear override');
+      await page.locator('#gfx-fps').uncheck();
       await page.locator('#screen-settings button', { hasText: 'Back' }).last().click();
       await page.waitForSelector('#screen-title:not([hidden])');
     });
