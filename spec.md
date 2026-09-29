@@ -296,3 +296,7 @@ QA bar, as checkable statements:
 - Client-side friends filtering once the host exposes a friends list to game-scoped tokens.
 - A "while you were away" summary for hosted resume (today: toast with time away; the local clock is paused, nothing is fetched).
 - Vibration on invalid/complete when the platform exposes haptics.
+
+## Browser interference
+
+`browser-guard.js` (loaded from `index.html`) suppresses browser UI that gets in the way of play: the right-click context menu, the iOS long-press callout, copy / cut / paste, and page text selection. Text fields (inputs, textareas, selects, contenteditable) keep normal selection, context menu and clipboard behaviour.
