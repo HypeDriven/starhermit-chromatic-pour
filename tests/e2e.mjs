@@ -80,6 +80,12 @@ function mockApi(req, res, pathname) {
     if (req.headers.authorization !== `Bearer ${HOST_TOKEN}`) return sendJson(res, 401, { error: 'unauthorized' });
     return sendJson(res, 200, { id: HOST_USER_ID, username: 'albert_raw', nickname: HOST_NICKNAME });
   }
+  // The rest of what the SDK reads at boot for a fresh player: no avatar, an
+  // empty cloud-save slot, no stored settings, default controls.
+  if (req.method === 'GET' && pathname === `/api/v1/users/${HOST_USER_ID}/avatar`) { res.writeHead(204).end(); return; }
+  if (req.method === 'GET' && pathname === '/api/v1/me/cloud-saves/game:chromatic-pour') { res.writeHead(204).end(); return; }
+  if (req.method === 'GET' && pathname === '/api/v1/games/chromatic-pour/settings') return sendJson(res, 200, { settings: {} });
+  if (req.method === 'GET' && pathname === '/api/v1/games/chromatic-pour/controls') return sendJson(res, 200, { actions: [] });
   return sendJson(res, 404, { error: 'not-found' });
 }
 

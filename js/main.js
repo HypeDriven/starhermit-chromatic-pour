@@ -95,7 +95,39 @@ function offlinePlatform(note) {
     unlockAchievement: async () => ({ error: note }),
     telemetry: () => {},
     signIn: async () => {},
+    canSignIn: () => false,
+    loadCloud: async () => null,
+    saveCloud: () => {},
+    flushCloud: async () => false,
+    getSettings: async () => ({}),
+    mirrorSettings: () => {},
+    loadBindings: async (d) => d,
+    setControls: async () => null,
+    resetControls: async () => null,
+    inviteLink: () => null,
+    copyInvite: async () => false,
+    onAuth: () => () => {},
   };
+}
+
+// Preferences mirrored to the StarHermit settings KV (not tutorial state,
+// telemetry consent or key bindings — those have their own homes).
+const SYNCED_SETTINGS = ['music', 'effects', 'ambience', 'voice', 'palette', 'theme', 'graphics', 'reducedMotion',
+  'largerText', 'highContrast', 'leftHanded', 'holdToConfirm', 'hintsEnabled', 'labelsOnLiquids', 'cameraWide'];
+function syncedSettings(s) {
+  const out = {};
+  for (const k of SYNCED_SETTINGS) if (s && s[k] !== undefined) out[k] = s[k];
+  return out;
+}
+
+async function restoreFromPlatform() {
+  try {
+    const doc = await platform.loadCloud();
+    if (doc) storage.importSaveDoc(doc);
+    const kv = await platform.getSettings();
+    const picked = syncedSettings(kv);
+    if (Object.keys(picked).length) storage.saveSettings({ ...storage.loadSettings(), ...picked });
+  } catch { /* local save stays authoritative */ }
 }
 
 function fatalBoot(title, detail) {
@@ -289,18 +321,6 @@ async function boot() {
     fatalBoot('The ledger is missing', 'Local storage support could not start. Reload the page; if it persists, this browser may block storage.');
     return;
   }
-  try {
-    settings = storage.loadSettings();
-  } catch {
-    settings = { ...(storage.SETTINGS_DEFAULTS || {}) };
-  }
-  // Graphics presets replaced the old single 'quality' select; carry it over once.
-  if (!settings.graphics || typeof settings.graphics !== 'object') {
-    settings.graphics = migrateQuality(settings.quality);
-  } else {
-    settings.graphics = { ...DEFAULT_GRAPHICS, ...settings.graphics };
-  }
-
   // Platform handshake — never block boot longer than 3 s.
   try {
     const platformMod = await import('./platform.js');
@@ -312,6 +332,30 @@ async function boot() {
   } catch (err) {
     console.warn('[chromatic-pour] platform unavailable', err);
     platform = offlinePlatform('unavailable');
+  }
+
+  // Signed in: the cloud save (remote wins; checksum-verified) and then the
+  // platform settings KV (wins over saved preferences) land in local storage
+  // before anything reads settings. Bounded so boot never waits long.
+  if (platform.hosted) {
+    await Promise.race([restoreFromPlatform(), new Promise((r) => setTimeout(r, 3000))]);
+  }
+  storage.onSaveChange(() => {
+    if (!platform.hosted) return;
+    platform.saveCloud(storage.exportSaveDoc());
+    platform.mirrorSettings(syncedSettings(storage.loadSettings()));
+  });
+
+  try {
+    settings = storage.loadSettings();
+  } catch {
+    settings = { ...(storage.SETTINGS_DEFAULTS || {}) };
+  }
+  // Graphics presets replaced the old single 'quality' select; carry it over once.
+  if (!settings.graphics || typeof settings.graphics !== 'object') {
+    settings.graphics = migrateQuality(settings.quality);
+  } else {
+    settings.graphics = { ...DEFAULT_GRAPHICS, ...settings.graphics };
   }
 
   // WebGL capability + render module (decorative layer; absence is fine).

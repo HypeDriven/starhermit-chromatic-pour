@@ -88,11 +88,18 @@ function readJson(key, fallback) {
   }
 }
 
+let saveListener = null;
+/** One listener (main.js) mirrors settings/progression writes to the cloud. */
+export function onSaveChange(fn) { saveListener = typeof fn === 'function' ? fn : null; }
+
 function writeJson(key, obj) {
   try {
     writeRaw(key, JSON.stringify(obj));
   } catch {
     // serialization failure: drop silently, storage must never throw
+  }
+  if (saveListener && (key === PREFIX + 'settings' || key === PREFIX + 'progression')) {
+    try { saveListener(key); } catch { /* mirroring never breaks a save */ }
   }
 }
 

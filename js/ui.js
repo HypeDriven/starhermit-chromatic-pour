@@ -13,6 +13,7 @@ import {
   presetTier, choosePreset, describe as describeGraphics, pixelRatio as gfxPixelRatio, DEFAULT_GRAPHICS,
 } from './gfx.js';
 import { gfxStrings, pickLocale, fmt } from './gfx-strings.js';
+import { platformStrings } from './platform-strings.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -110,23 +111,50 @@ function buildShapeSprite() {
 // Section 3 — control bindings & settings defaults (UI-owned keys)
 // ---------------------------------------------------------------------------
 
+// Keyboard actions as KeyboardEvent.code lists — declared as control.<action>
+// in starhermit.txt; signed in, the player's StarHermit bindings override them.
 const DEFAULT_BINDINGS = {
-  focusNext: 'ArrowRight',
-  focusPrev: 'ArrowLeft',
-  confirm: 'Enter',
-  cancel: 'Escape',
-  pause: 'p',
-  undo: 'u',
-  hint: 'h',
-  restart: 'r',
-  cameraReset: 'c',
-  // Optional gamepad remap placeholder: {confirm, cancel, undo, hint, pause}
-  gamepadRemap: null,
+  focusNext: ['ArrowRight', 'KeyD'],
+  focusPrev: ['ArrowLeft', 'KeyA'],
+  focusUp: ['ArrowUp', 'KeyW'],
+  focusDown: ['ArrowDown', 'KeyS'],
+  confirm: ['Enter', 'Space'],
+  cancel: ['Escape'],
+  pause: ['KeyP'],
+  undo: ['KeyU'],
+  hint: ['KeyH'],
+  restart: ['KeyR'],
+  cameraReset: ['KeyC'],
 };
+
+// Older saves stored one `event.key` per action ('p', 'ArrowRight', ' ').
+function keyToCode(k) {
+  if (typeof k !== 'string' || !k) return null;
+  if (/^[a-z]$/i.test(k)) return 'Key' + k.toUpperCase();
+  if (/^[0-9]$/.test(k)) return 'Digit' + k;
+  if (k === ' ') return 'Space';
+  return k;
+}
+function normalizeBindings(b) {
+  const out = {};
+  for (const [action, def] of Object.entries(DEFAULT_BINDINGS)) {
+    const v = b && b[action];
+    const codes = Array.isArray(v) ? v.filter((c) => typeof c === 'string' && c)
+      : (typeof v === 'string' ? [keyToCode(v)].filter(Boolean) : []);
+    out[action] = codes.length ? codes : def.slice();
+  }
+  return out;
+}
+const KEY_NAMES = { ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Escape: 'Esc', Space: 'Space' };
+function prettyCodes(codes) {
+  return (codes || []).map((c) => KEY_NAMES[c] || c.replace(/^Key|^Digit/, '')).join(' / ');
+}
 
 const BINDING_LABELS = {
   focusNext: 'Focus next vessel',
   focusPrev: 'Focus previous vessel',
+  focusUp: 'Focus vessel above',
+  focusDown: 'Focus vessel below',
   confirm: 'Select / pour',
   cancel: 'Cancel selection',
   pause: 'Pause',
@@ -172,7 +200,22 @@ export function createUI({ root, services }) {
   if (!settings.graphics || typeof settings.graphics !== 'object') settings.graphics = { ...DEFAULT_GRAPHICS };
 
   // -- live settings normalization (bindings may be absent in older saves) --
-  settings.bindings = Object.assign({}, DEFAULT_BINDINGS, settings.bindings || {});
+  if (settings.gamepadRemap === undefined) settings.gamepadRemap = settings.bindings?.gamepadRemap || null;
+  settings.bindings = normalizeBindings(settings.bindings);
+  const PT = platformStrings((typeof navigator !== 'undefined' && navigator.language) || 'en-US');
+  let codeMap = null;
+  function actionFor(e) {
+    if (!codeMap) {
+      codeMap = {};
+      for (const [a, codes] of Object.entries(settings.bindings)) for (const c of codes) codeMap[c] = a;
+    }
+    return codeMap[e.code] || null;
+  }
+  // Signed in: the player's StarHermit bindings win over the local ones.
+  platform.loadBindings(settings.bindings).then((b) => {
+    settings.bindings = normalizeBindings(b);
+    codeMap = null;
+  }).catch(() => {});
 
   // -- module state --
   let currentState = 'boot';
@@ -326,6 +369,21 @@ export function createUI({ root, services }) {
     requestAnimationFrame(() => { region.textContent = message; });
   }
 
+  async function inviteFriend() {
+    audio?.play('ui');
+    const ok = await platform.copyInvite();
+    if (ok) notify(PT.inviteCopied);
+    else notify(PT.inviteFailed);
+  }
+
+  // Renewal refused: the player is signed out; keep playing locally.
+  platform.onAuth?.((a) => {
+    if (a.signedIn) return;
+    updateProfileChip();
+    notify(PT.signedOut);
+    if (currentState === 'title') buildTitleScreen();
+  });
+
   function notify(message) {
     toast(message, 'info');
     announce(message);
@@ -407,9 +465,11 @@ export function createUI({ root, services }) {
       notify(`Signed in as ${platform.profile.displayName}.`);
       return;
     }
+    let res = null;
     try {
-      await platform.signIn();
+      res = await platform.signIn();
     } catch { /* host shell handles its own errors */ }
+    if (res?.redirecting) return; // StarHermit sign-in page; returns with a token
     updateProfileChip();
     if (platform.profile && platform.profile.displayName) {
       announce(`Signed in as ${platform.profile.displayName}.`);
@@ -468,7 +528,9 @@ export function createUI({ root, services }) {
       el('button', { class: 'btn btn-ghost', type: 'button', text: 'Help', onclick: () => { renderHelp(); showScreen('help'); } }),
       el('button', { class: 'btn btn-ghost', type: 'button', text: 'Settings', onclick: () => { renderSettings(); showScreen('settings'); } }),
       el('button', { class: 'btn btn-ghost', type: 'button', text: 'Progress', onclick: () => { transition('progression', { owner: 'ui', reason: 'title-nav' }); } }),
-      el('button', { class: 'btn btn-ghost', type: 'button', text: 'All modes', onclick: () => { transition('mode-select', { owner: 'ui', reason: 'title-nav' }); } }));
+      el('button', { class: 'btn btn-ghost', type: 'button', text: 'All modes', onclick: () => { transition('mode-select', { owner: 'ui', reason: 'title-nav' }); } }),
+      platform.hosted ? el('button', { class: 'btn btn-ghost', type: 'button', id: 'cp-invite', text: PT.invite, onclick: () => inviteFriend() }) : null,
+      platform.canSignIn?.() ? el('button', { class: 'btn btn-primary', type: 'button', id: 'cp-signin', text: PT.signIn, onclick: () => platform.signIn() }) : null);
 
     const titleArt = el('img', {
       class: 'cp-title-art', src: 'assets/title-art.webp', alt: '', 'aria-hidden': 'true',
@@ -1845,7 +1907,7 @@ export function createUI({ root, services }) {
     const s = screens.help;
     s.textContent = '';
     const b = settings.bindings;
-    const pretty = (key) => key.length === 1 ? key.toUpperCase() : key;
+
 
     const ruleCard = (title, vessels, caption) => el('div', { class: 'panel cp-rule-card' },
       el('h2', { text: title }),
@@ -1868,8 +1930,8 @@ export function createUI({ root, services }) {
       el('table', { class: 'cp-table' },
         el('tbody', {}, Object.keys(BINDING_LABELS).map((action) => el('tr', {},
           el('th', { scope: 'row', text: BINDING_LABELS[action] }),
-          el('td', {}, el('kbd', { text: pretty(b[action] || DEFAULT_BINDINGS[action]) })))))),
-      el('p', { class: 'card-dim', text: 'Also: arrow keys or WASD move vessel focus; Enter or Space selects and pours; Escape cancels a selection or pauses. Gamepad: stick or D-pad moves focus, A pours, B cancels, Start pauses, X undoes, Y hints.' }),
+          el('td', {}, el('kbd', { text: prettyCodes(b[action] || DEFAULT_BINDINGS[action]) })))))),
+      el('p', { class: 'card-dim', text: 'Escape also cancels a selection or pauses. Gamepad: stick or D-pad moves focus, A pours, B cancels, Start pauses, X undoes, Y hints.' }),
       el('div', { class: 'cp-pause-group' },
         el('button', { class: 'btn btn-primary', type: 'button', text: settings.tutorialDone ? 'Replay the lessons' : 'Start the lessons', onclick: () => openSetup('lesson') }),
         el('button', { class: 'btn btn-ghost', type: 'button', 'data-autofocus': true, text: 'Back', onclick: () => backFromSubScreen() })));
@@ -2060,8 +2122,8 @@ export function createUI({ root, services }) {
       Object.keys(BINDING_LABELS).map((action) => {
         const btn = el('button', {
           class: 'btn btn-ghost cp-binding-key', type: 'button',
-          text: settings.bindings[action] || DEFAULT_BINDINGS[action],
-          'aria-label': `${BINDING_LABELS[action]}, currently ${settings.bindings[action]}. Activate to remap.`,
+          text: prettyCodes(settings.bindings[action]),
+          'aria-label': `${BINDING_LABELS[action]}, currently ${prettyCodes(settings.bindings[action])}. Activate to remap.`,
           onclick: () => beginRemap(action, btn),
         });
         return el('div', { class: 'cp-binding-row' },
@@ -2069,7 +2131,8 @@ export function createUI({ root, services }) {
       }));
     s.append(section('Controls',
       bindingsList,
-      el('p', { class: 'card-dim', text: 'Choose a control, then press the new key. Arrow keys and WASD always move focus.' }),
+      el('p', { class: 'card-dim', text: 'Choose a control, then press the new key. Signed in to StarHermit, your keys follow you to other devices.' }),
+      el('button', { class: 'btn btn-ghost', type: 'button', text: 'Reset keys to defaults', onclick: () => resetBindings() }),
       toggle('Left-handed tray', 'leftHanded'),
       toggle('Hold to confirm selection', 'holdToConfirm')));
 
@@ -2118,6 +2181,15 @@ export function createUI({ root, services }) {
     s.append(el('button', { class: 'btn btn-ghost', type: 'button', 'data-autofocus': true, text: 'Back', onclick: () => backFromSubScreen() }));
   }
 
+  function resetBindings() {
+    settings.bindings = normalizeBindings(null);
+    codeMap = null;
+    persistSettings('bindings');
+    platform.resetControls().catch(() => {});
+    renderSettings();
+    announce('Keys reset to defaults.');
+  }
+
   function beginRemap(action, btn) {
     if (remapCapture) remapCapture.button.classList.remove('capturing');
     remapCapture = { action, button: btn };
@@ -2162,7 +2234,8 @@ export function createUI({ root, services }) {
       if (!ok) return;
       if (data.settings) {
         Object.assign(settings, data.settings);
-        settings.bindings = Object.assign({}, DEFAULT_BINDINGS, settings.bindings || {});
+        settings.bindings = normalizeBindings(settings.bindings);
+        codeMap = null;
         saveSettings(settings);
       }
       if (data.progression) storage.saveProgression(data.progression);
@@ -2470,45 +2543,54 @@ export function createUI({ root, services }) {
       const { action, button } = remapCapture;
       remapCapture = null;
       button.classList.remove('capturing');
-      if (e.key !== 'Escape') {
-        settings.bindings[action] = e.key;
+      if (e.code !== 'Escape' && e.code) {
+        // A code belongs to exactly one action: take it from any other.
+        for (const a of Object.keys(settings.bindings)) {
+          if (a !== action) {
+            const rest = settings.bindings[a].filter((c) => c !== e.code);
+            settings.bindings[a] = rest.length ? rest : DEFAULT_BINDINGS[a].filter((c) => c !== e.code);
+          }
+        }
+        settings.bindings[action] = [e.code];
+        codeMap = null;
         persistSettings('bindings');
-        announce(`${BINDING_LABELS[action]} is now ${e.key}.`);
+        platform.setControls(settings.bindings);
+        announce(`${BINDING_LABELS[action]} is now ${prettyCodes([e.code])}.`);
       } else {
         announce('Remap cancelled.');
       }
-      button.textContent = settings.bindings[action] || DEFAULT_BINDINGS[action];
+      button.textContent = prettyCodes(settings.bindings[action]);
       return;
     }
 
     const inField = /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName || '');
-    const b = settings.bindings;
-    const key = e.key;
+    const act = actionFor(e);
 
     if (inField) {
-      if (key === 'Escape') document.activeElement.blur();
+      if (e.key === 'Escape') document.activeElement.blur();
       return;
     }
 
     const playing = currentState === 'active' || currentState === 'tutorial';
     if (!playing) return;
 
-    if (key === 'Escape' || key === b.cancel) { e.preventDefault(); cancelOrPause(); return; }
-    if (key === b.pause) { e.preventDefault(); pauseRound(); return; }
-    if (key === 'ArrowRight' || key === 'ArrowLeft' || key === 'ArrowUp' || key === 'ArrowDown' ||
-        key === 'a' || key === 'd' || key === 'w' || key === 's' ||
-        key === b.focusNext || key === b.focusPrev) {
-      e.preventDefault();
-      if (key === 'ArrowRight' || key === 'd' || key === b.focusNext) moveVesselFocus(1);
-      else if (key === 'ArrowLeft' || key === 'a' || key === b.focusPrev) moveVesselFocus(-1);
-      else if (key === 'ArrowUp' || key === 'w') moveVesselFocusVertical(-1);
-      else if (key === 'ArrowDown' || key === 's') moveVesselFocusVertical(1);
+    if (e.key === 'Escape' || act === 'cancel') { e.preventDefault(); cancelOrPause(); return; }
+    if (act === 'pause') { e.preventDefault(); pauseRound(); return; }
+    if (act === 'focusNext') { e.preventDefault(); moveVesselFocus(1); return; }
+    if (act === 'focusPrev') { e.preventDefault(); moveVesselFocus(-1); return; }
+    if (act === 'focusUp') { e.preventDefault(); moveVesselFocusVertical(-1); return; }
+    if (act === 'focusDown') { e.preventDefault(); moveVesselFocusVertical(1); return; }
+    if (act === 'confirm') {
+      // Enter/Space activate the focused vessel natively; a rebound key pours too.
+      if (e.code === 'Enter' || e.code === 'Space') return;
+      const active = document.activeElement;
+      if (active?.classList?.contains('vessel')) { e.preventDefault(); onVesselActivate(Number(active.dataset.index)); }
       return;
     }
-    if (key === b.undo) { e.preventDefault(); doUndo(); return; }
-    if (key === b.hint) { e.preventDefault(); doHint(); return; }
-    if (key === b.restart) { e.preventDefault(); doRestart(); return; }
-    if (key === b.cameraReset) { e.preventDefault(); recenterView(); }
+    if (act === 'undo') { e.preventDefault(); doUndo(); return; }
+    if (act === 'hint') { e.preventDefault(); doHint(); return; }
+    if (act === 'restart') { e.preventDefault(); doRestart(); return; }
+    if (act === 'cameraReset') { e.preventDefault(); recenterView(); }
   });
 
   // Hold-to-confirm pointer handling on the board.
@@ -2530,7 +2612,7 @@ export function createUI({ root, services }) {
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
     const pad = [...pads].find((p) => p && p.connected);
     if (!pad) return;
-    const gp = settings.bindings.gamepadRemap || {};
+    const gp = settings.gamepadRemap || {};
     const idx = { confirm: 0, cancel: 1, undo: 2, hint: 3, pause: 9, ...gp };
     const pressedNow = pad.buttons.map((btn) => !!btn?.pressed);
     const justPressed = (i) => pressedNow[i] && !gamepadPrev[i];

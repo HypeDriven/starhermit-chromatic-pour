@@ -7,6 +7,7 @@ import * as rules from '../js/rules.js';
 import { GameSession } from '../js/session.js';
 import { createRng } from '../js/rng.js';
 import * as storage from '../js/storage.js';
+import { loadSdkFactory } from './starhermit-harness.mjs';
 import * as gfx from '../js/gfx.js';
 import { gfxStrings, pickLocale, GFX_LOCALES } from '../js/gfx-strings.js';
 import {
@@ -698,29 +699,49 @@ function fakeJwt(claims) {
   return `${b64({ alg: 'none' })}.${b64(claims)}.sig`;
 }
 
-// Runs initPlatform with a fake location + fetch; returns {platform, calls}.
+// Runs initPlatform on top of the shipped starhermit-sdk.js with a fake
+// location + fetch (SDK and own-server calls share the stub); returns
+// {platform, calls, sdk}.
+function stubResponse(route) {
+  const body = route.body;
+  return {
+    status: route.status,
+    ok: route.status >= 200 && route.status < 300,
+    statusText: String(route.status),
+    headers: { get: () => null },
+    json: async () => body,
+    text: async () => (body == null ? '' : JSON.stringify(body)),
+    arrayBuffer: async () => (route.bytes ? route.bytes.buffer.slice(route.bytes.byteOffset, route.bytes.byteOffset + route.bytes.byteLength) : new ArrayBuffer(0)),
+    blob: async () => null,
+  };
+}
 async function withHost({ hash = '', search = '' }, routes) {
   const calls = [];
   const prevWindow = globalThis.window;
   const prevFetch = globalThis.fetch;
-  globalThis.window = { location: { hash, search, pathname: '/index.html' }, addEventListener() {} };
-  globalThis.fetch = async (url, init = {}) => {
-    calls.push({ url, headers: init.headers || {} });
-    const route = routes[url] || { status: 404, body: { error: 'not-found' } };
-    return {
-      status: route.status,
-      ok: route.status >= 200 && route.status < 300,
-      headers: { get: () => null },
-      json: async () => route.body,
-      blob: async () => null,
-    };
+  const prevDoc = globalThis.document;
+  const win = {
+    location: { hash, search, pathname: '/index.html', hostname: 'localhost', href: 'http://localhost/index.html' + search + hash, origin: 'http://localhost' },
+    history: { state: null, replaceState() {} },
+    addEventListener() {},
   };
+  globalThis.window = win;
+  globalThis.document = { hidden: false, addEventListener() {} };
+  const stub = async (url, init = {}) => {
+    calls.push({ url, method: init.method || 'GET', headers: init.headers || {}, body: init.body });
+    const route = typeof routes === 'function' ? routes(url, init) : routes[url];
+    return stubResponse(route || { status: 404, body: { error: 'not-found' } });
+  };
+  globalThis.fetch = stub;
+  const sdk = loadSdkFactory().create({ window: win, fetch: stub, setTimeout: () => 0, clearTimeout: () => {} });
+  globalThis.StarHermit = sdk.init();
   try {
     const { initPlatform } = await import('../js/platform.js');
     const platform = await initPlatform({ getConsent: () => false });
-    return { platform, calls };
+    return { platform, calls, sdk };
   } finally {
     if (prevWindow === undefined) delete globalThis.window; else globalThis.window = prevWindow;
+    if (prevDoc === undefined) delete globalThis.document; else globalThis.document = prevDoc;
     globalThis.fetch = prevFetch;
   }
 }
@@ -747,46 +768,63 @@ await testAsync('platform: #game_token launch shows the StarHermit nickname', as
 
 await testAsync('platform: nickname only, never the username; neutral id fallback', async () => {
   const jwt = fakeJwt({ sub: USER_ID, game_scope: 'chromatic-pour' });
-  const a = await withHost({ search: `?token=${jwt}` }, {
+  const a = await withHost({ hash: `#game_token=${jwt}` }, {
     '/api/v1/time': { status: 200, body: { epochMs: Date.now() } },
     [PROFILE_URL]: { status: 200, body: { id: USER_ID, username: 'albert_raw', nickname: '' } },
   });
-  eq(a.platform.profile?.displayName, 'Player a1b2c3d4', 'neutral shortened id when the nickname is empty (username never displayed)');
-  const b = await withHost({ search: `?token=${jwt}` }, {
+  eq(a.platform.profile?.displayName, 'Player a1b2c3', 'neutral shortened id when the nickname is empty (username never displayed)');
+  const b = await withHost({ hash: `#game_token=${jwt}` }, {
     '/api/v1/time': { status: 200, body: { epochMs: Date.now() } },
     [PROFILE_URL]: { status: 403, body: { error: 'forbidden' } },
   });
-  eq(b.platform.profile?.displayName, 'Player a1b2c3d4', 'neutral shortened id when the profile is unreadable');
+  eq(b.platform.profile?.displayName, 'Player a1b2c3', 'neutral shortened id when the profile is unreadable');
   assert(!b.platform.profile.displayName.includes(USER_ID), 'never leaks the full user id');
 });
 
-await testAsync('platform: standalone launch stays guest', async () => {
+await testAsync('platform: standalone launch stays guest and makes no requests', async () => {
   const { platform, calls } = await withHost({}, {});
   eq(platform.hosted, false, 'no token -> standalone');
   eq(platform.profile, null, 'no profile -> guest chip');
+  eq(await platform.loadCloud(), null, 'no cloud save');
+  platform.saveCloud({ x: 1 });
+  deepEq(await platform.getSettings(), {}, 'no settings KV');
+  platform.mirrorSettings({ music: 1 });
+  const b = await platform.loadBindings({ undo: ['KeyU'] });
+  deepEq(b, { undo: ['KeyU'] }, 'local bindings');
+  eq(platform.inviteLink(), null, 'no invite link');
+  eq(platform.canSignIn(), false, 'no sign-in off the platform host');
+  eq((await platform.submitScore('b', { score: 1 })).local, true, 'scores stay local');
   eq(calls.length, 0, 'no network calls when standalone');
 });
 
-await testAsync('platform: late profile answer reaches onProfile listeners', async () => {
-  const jwt = fakeJwt({ sub: USER_ID, game_scope: 'chromatic-pour' });
-  const seen = [];
-  const { platform } = await withHost({ hash: `#game_token=${jwt}` }, {
-    '/api/v1/time': { status: 200, body: { epochMs: Date.now() } },
-    [PROFILE_URL]: { status: 200, body: { id: USER_ID, username: 'u', nickname: 'Late Nick' } },
+await testAsync('platform: cloud save game:<slug> round-trip, settings KV patch, bindings, invite', async () => {
+  const jwt = fakeJwt({ sub: USER_ID, game_scope: 'chromatic-pour', exp: Math.floor(Date.now() / 1000) + 3600 });
+  let saved = null;
+  let kv = { music: 0.2 };
+  const SAVE_URL = '/api/v1/me/cloud-saves/' + encodeURIComponent('game:chromatic-pour');
+  const { platform, calls, sdk } = await withHost({ hash: `#game_token=${jwt}` }, (url, init) => {
+    const m = init.method || 'GET';
+    if (url === PROFILE_URL) return { status: 200, body: { nickname: 'Al' } };
+    if (url === SAVE_URL && m === 'PUT') { saved = Buffer.from(JSON.parse(init.body).dataBase64, 'base64'); return { status: 204 }; }
+    if (url === SAVE_URL) return saved ? { status: 200, bytes: new Uint8Array(saved) } : { status: 404 };
+    if (url === '/api/v1/games/chromatic-pour/settings' && m === 'PATCH') { kv = { ...kv, ...JSON.parse(init.body).settings }; return { status: 200, body: { settings: kv } }; }
+    if (url === '/api/v1/games/chromatic-pour/settings') return { status: 200, body: { settings: kv } };
+    if (url === '/api/v1/games/chromatic-pour/controls') return { status: 200, body: { actions: [{ action: 'undo', codes: ['KeyZ'] }] } };
+    return null;
   });
-  platform.onProfile((p) => seen.push(p.displayName));
-  // fetchProfile is idempotent and re-notifies; the UI relies on this signal.
-  globalThis.window = { location: { hash: '', search: '', pathname: '/' }, addEventListener() {} };
-  const prevFetch = globalThis.fetch;
-  globalThis.fetch = async () => ({ status: 200, ok: true, headers: { get: () => null },
-    json: async () => ({ id: USER_ID, username: 'u', nickname: 'Late Nick' }), blob: async () => null });
-  try {
-    await platform.fetchProfile();
-  } finally {
-    globalThis.fetch = prevFetch;
-    delete globalThis.window;
-  }
-  eq(seen[0], 'Late Nick', 'listener received the resolved nickname');
+  eq(await platform.loadCloud(), null, 'empty slot');
+  const doc = storage.checksumDoc({ settings: { music: 0.5 }, progression: { streak: 2 } });
+  platform.saveCloud(doc);
+  eq(await platform.flushCloud(), true, 'flushed');
+  const put = calls.find((c) => c.method === 'PUT');
+  eq(put.url, SAVE_URL, 'cloud-save path is game:<slug>');
+  deepEq(await platform.loadCloud(), doc, 'cloud round-trip');
+  eq((await platform.getSettings()).music, 0.2, 'settings read');
+  await sdk.patchSettings({ theme: 'tide' });
+  eq(kv.theme, 'tide', 'settings patched');
+  const b = await platform.loadBindings({ undo: ['KeyU'], hint: ['KeyH'] });
+  deepEq(b, { undo: ['KeyZ'], hint: ['KeyH'] }, 'platform binding overrides');
+  eq(platform.inviteLink(), `https://dashboard.starhermit.com/game-invite/${USER_ID}/chromatic-pour`, 'invite link');
 });
 
 // ---------------------------------------------------------------------------
