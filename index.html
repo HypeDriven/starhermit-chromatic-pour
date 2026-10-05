@@ -15,12 +15,13 @@
     html, body { margin: 0; padding: 0; background: #14100e; }
     body { color: #ece2cf; font-family: ui-serif, "Iowan Old Style", Georgia, "Times New Roman", serif; }
     .cp-boot {
-      min-height: 100vh; min-height: 100dvh;
+      min-height: calc(100vh / var(--ui-scale, 1)); min-height: calc(100dvh / var(--ui-scale, 1));
       display: grid; place-items: center; text-align: center;
       padding: 2rem; box-sizing: border-box;
     }
     .cp-boot p { font-size: 1.05rem; letter-spacing: 0.04em; opacity: 0.85; margin: 0; }
   </style>
+  <script src="ui-scale.js"></script>
   <script src="starhermit-sdk.js"></script>
   <script>StarHermit.init();</script>
   <script type="module" src="js/main.js"></script>

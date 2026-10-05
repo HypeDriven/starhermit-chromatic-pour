@@ -1610,7 +1610,8 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
   function updateSize(force) {
     const w = Math.max(1, Math.round(canvas.clientWidth || (container && container.clientWidth) || cssW));
     const h = Math.max(1, Math.round(canvas.clientHeight || (container && container.clientHeight) || cssH));
-    const ratio = gfxPixelRatio(gfx, dprRaw, adaptiveScale);
+    // × UIScale: the canvas sits inside the zoomed #app, so its backing store grows with the zoom.
+    const ratio = gfxPixelRatio(gfx, dprRaw, adaptiveScale) * ((window.UIScale && window.UIScale.value) || 1);
     if (!force && w === cssW && h === cssH && ratio === pixelRatioNow) return;
     const sizeChanged = w !== cssW || h !== cssH;
     cssW = w; cssH = h;

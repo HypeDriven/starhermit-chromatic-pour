@@ -143,6 +143,7 @@ Bindings (as `event.code` lists) for focus (arrows and WASD by default), confirm
 - ≤ 700 px (portrait phone): rails hidden; sticky bottom tray with four 44 px-minimum buttons (reversed for left-handed); playfield `min-height: 48vh`; vessels scale with `--slot-h: clamp(1.6rem, 4.2vw, 2.6rem)` and `--tube-w: clamp(2.9rem, 7.5vw, 4.2rem)`.
 - Landscape ≤ 500 px tall: left rail as a narrow static column, right rail hidden, tray present, smaller slot sizes (`clamp(1.1rem, 6vh, 1.8rem)`), key art capped at 7 rem.
 - Safe areas: top bar and tray pad with `env(safe-area-inset-*)`; `viewport-fit=cover`.
+- Large screens (> 1600×1000): `ui-scale.js` sets `--ui-scale` (1 up to a 1600×1000 viewport, then the smaller of width/1600 and height/1000, capped at 2.5); `#app` and the FPS meter are CSS-`zoom`ed by it with every vw/vh length divided by it, so all screens, rails, overlays and the board grow proportionally; the playfield keeps `min-height: 60vh` of the viewport, and the shelf canvas multiplies its pixel ratio by the scale so it stays sharp.
 
 **Must never be cut off:** the full vessel row (wraps to multiple rows via the board's flex layout), the tray buttons, the timer/limit badge, the countdown, the results action row, and the pause dialog's Resume button.
 
