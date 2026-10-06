@@ -269,7 +269,7 @@ button.card:hover:not(:disabled) {
 .cp-title-art {
   display: block;
   width: min(100%, 56rem);
-  max-height: clamp(9rem, calc(32vh / var(--ui-scale, 1)), 20rem);
+  max-height: clamp(9rem, calc(30vh / var(--ui-scale, 1)), 20rem);
   margin: 0 auto 0.75rem;
   object-fit: cover;
   border-radius: var(--radius);
@@ -280,7 +280,7 @@ button.card:hover:not(:disabled) {
 }
 .cp-title-art[hidden] { display: none; }
 @media (max-height: 500px) and (orientation: landscape) {
-  .cp-title-art { max-height: 7rem; }
+  .cp-title-art { max-height: 4.5rem; }
 }
 
 .cp-wordmark { margin: 0 0 0.15em; font-size: clamp(2.6rem, calc(9vw / var(--ui-scale, 1)), 5rem); letter-spacing: 0.04em; }
@@ -320,7 +320,7 @@ button.card:hover:not(:disabled) {
 
 .cp-title-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(15rem, 100%), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(13rem, 100%), 1fr));
   gap: 0.9rem;
 }
 .card-small { align-items: center; }
@@ -964,6 +964,10 @@ body.labels-on .layer-label { display: block; }
   }
   .cp-tutorial-card .card-kicker { font-size: 0.65rem; }
   .cp-tutorial-text { font-size: 0.85rem; }
+  /* Title: compact hero so PLAY sits above the fold. */
+  .cp-title-hero { padding: 0.25rem 0 0.5rem; }
+  .cp-wordmark { font-size: 2.4rem; }
+  .cp-tagline { margin-bottom: 0.75rem; }
 }
 
 /* ------------------------------------------------------------------ */

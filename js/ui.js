@@ -430,6 +430,8 @@ export function createUI({ root, services }) {
       }
     }
     main.scrollTop = 0;
+    // The document scrolls too (phones, long screens): start every screen at the top.
+    window.scrollTo(0, 0);
   }
 
   function updateProfileChip() {
