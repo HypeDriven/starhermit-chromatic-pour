@@ -1682,7 +1682,9 @@ export function createUI({ root, services }) {
     if ((record.newAchievements || []).length) audio?.play('achievement');
     for (const key of record.newAchievements || []) {
       const meta = (storage.ACHIEVEMENTS || []).find((a) => a.key === key);
-      toast(`Achievement unlocked: ${meta ? meta.name : key}`, 'achievement');
+      // the results screen lists new unlocks under "Achievements unlocked";
+      // a toast here would sit over that list and the results buttons
+      announce(`Achievement unlocked: ${meta ? meta.name : key}`);
       // Durable delivery to the host (idempotent server-side); local unlock
       // already happened in recordResult.
       try { platform.unlockAchievement?.(key)?.catch?.(() => {}); } catch { /* best-effort */ }
