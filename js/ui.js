@@ -13,7 +13,7 @@ import {
   presetTier, choosePreset, describe as describeGraphics, pixelRatio as gfxPixelRatio, DEFAULT_GRAPHICS,
 } from './gfx.js';
 import { gfxStrings, pickLocale, fmt } from './gfx-strings.js';
-import { platformStrings } from './platform-strings.js';
+import { platformStrings, fmtPlatform } from './platform-strings.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -1822,14 +1822,12 @@ export function createUI({ root, services }) {
     }
 
     // Leaderboard position / comparison
-    if (ranked && boardKey) {
-      if (ctx.submission && ctx.submission.accepted) {
-        sections.push(el('p', { class: 'cp-ranked-note', text: ctx.submission.rank
-          ? `Ranked #${ctx.submission.rank} on this board.`
-          : 'Score accepted on the ranked board.' }));
-      } else {
-        sections.push(el('p', { class: 'cp-ranked-note card-dim', text: 'Ranked submission is queued for when the host responds.' }));
-      }
+    // Signed in only: the StarHermit high-score board (standalone shows nothing).
+    if (ranked && boardKey && ctx.submission && ctx.submission.platform) {
+      const sub = ctx.submission;
+      sections.push(el('p', { id: 'cp-results-lb', class: 'cp-ranked-note' + (sub.accepted ? '' : ' card-dim'), text: !sub.accepted
+        ? PT.lbNotPosted
+        : sub.rank ? fmtPlatform(PT.lbRank, { rank: sub.rank }) : PT.lbPosted }));
     }
     if (ctx.bestBefore != null) {
       const prev = ctx.bestBefore.score ?? ctx.bestBefore;

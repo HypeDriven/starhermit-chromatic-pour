@@ -7,9 +7,10 @@
 // standalone (no token): nothing touches the network, scores/leaderboards go
 // local, telemetry is dropped.
 //
-// Score/leaderboard/achievement/telemetry/activity/presence/time routes are
-// the game's own server backend (server.js) and are only called when
-// signed in. Telemetry consent is read through `opts.getConsent` (default:
+// Signed in, a ranked round's total goes to the StarHermit `high-score`
+// leaderboard through StarHermit.submitScores (score-script.js). The
+// leaderboard/achievement/telemetry/activity/presence/time routes are the
+// game's own server backend (server.js) and are only called when signed in. Telemetry consent is read through `opts.getConsent` (default:
 // storage.loadSettings().telemetryConsent); only funnel events are allowed.
 
 import { loadBestScore, saveBestScore, loadSettings } from './storage.js';
@@ -185,19 +186,23 @@ export async function initPlatform(opts = {}) {
     } catch { /* storage full */ }
 
     if (!isHosted()) return { accepted: true, local: true };
+    // Signed in: post the round total to the StarHermit `high-score` board
+    // (score-script.js range-checks it) and read back the player's rank there.
     try {
-      const r = await apiFetch('/api/v1/scores', { method: 'POST', body: { board, entry } });
-      if (r.status === 429) return { error: 'rate-limited', retryAfter: r.retryAfter };
-      if (r.json && typeof r.json.error === 'string') return { error: r.json.error };
-      if (r.status >= 200 && r.status < 300) {
-        const out = { accepted: true };
-        if (r.json && typeof r.json.rank === 'number') out.rank = r.json.rank;
-        if (localAccepted) out.local = true;
-        return out;
-      }
-      return { error: 'http-' + r.status, local: localAccepted };
+      const r = entry?.result && typeof entry.result === 'object' ? entry.result : entry || {};
+      const total = Math.round(Number(r.score) || 0);
+      const keys = await SH.submitScores({ 'high-score': total });
+      if (!(keys || []).includes('high-score')) return { error: 'not-posted', platform: true, local: localAccepted };
+      const out = { accepted: true, platform: true, rank: null };
+      try {
+        const lb = await SH.leaderboard('high-score', { pageSize: 100 });
+        const me = (lb.items || []).find((i) => i.userId === SH.userId);
+        if (me) out.rank = me.rank;
+      } catch { /* posted; rank unknown */ }
+      if (localAccepted) out.local = true;
+      return out;
     } catch {
-      return { error: 'unavailable', local: localAccepted };
+      return { error: 'unavailable', platform: true, local: localAccepted };
     }
   }
 

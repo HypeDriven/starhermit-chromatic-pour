@@ -11,21 +11,22 @@ This document describes the game as it runs today (present tense). Anything not 
 | Path | Role |
 |---|---|
 | `index.html` | Entry; import map (`three` → `vendor/three.module.js`, `three/addons/` → `vendor/addons/`), boot placeholder, critical CSS. |
-| `starhermit.txt` | Platform manifest: `name=Chromatic Pour`, `launch=index.html`, `server=server.js`, `cover=coverart.png`. |
+| `starhermit.txt` | Platform manifest: `name=Chromatic Pour`, `launch=index.html`, `server=score-script.js`, `cover=coverart.png`. |
 | `js/main.js` | Boot, GPU probe + Auto graphics preset, app state machine, rAF loop, lifecycle (visibility, resize, DPR), error surface. |
 | `js/ui.js` | Every screen, the DOM vessel board, input (pointer, keyboard, gamepad), tutorial flow, settings, results, announcements. |
 | `js/rules.js` | Pure rules engine: deal, legality, pour, scoring, hashing, solver, hint. No DOM, Date, or Math.random. |
 | `js/content.js` | Colour sets, themes, difficulties, lessons, 40 journey stages, 6 challenges, daily/practice generators, par + content validation. |
 | `js/session.js` | `GameSession`: clock, selection state machine, undo history, command log, replay envelope, snapshot/restore. |
 | `js/storage.js` | localStorage persistence (settings, progression, bests, replays), checksummed save export/import, achievements. |
-| `js/platform.js` | StarHermit adapter: launch token, profile, time sync, activity/presence, scores, leaderboard, achievements, telemetry. |
+| `js/platform.js` | StarHermit adapter: launch token, profile, time sync, activity/presence, StarHermit high-score posting, leaderboard, achievements, telemetry. |
+| `score-script.js` | StarHermit platform script (`server=`): range-checks a finished ranked round's total and posts it to the `high-score` leaderboard (canonical copy in the games repo's `tools/score-script.js`). |
 | `js/render.js` | Three.js ambient shelf: procedural wall/wood textures, lighting + shadows, image-based lighting, post-processing chain, adaptive resolution, motes and pooled particles, celebrations. |
 | `js/gfx.js` | Pure graphics quality model: presets, categories, GPU detection, `resolve()`, `presetTier()`, `choosePreset()`, `describe()`. |
 | `js/gfx-strings.js` | Graphics panel strings in the nine target locales, picked from `navigator.language`. |
 | `vendor/three.module.js`, `vendor/addons/` | three.js r160 build and the matching r160 addons (EffectComposer and passes, GTAO/SMAA/FXAA/bloom shaders, RoomEnvironment). |
 | `js/audio.js` | WebAudio: buses, sample one-shots from `sfx/`, synthesized fallbacks, generative music, per-theme ambience. |
 | `js/rng.js` | xmur3 + mulberry32 seeded streams: `rulesStream`, `decorStream`, `audioStream`. |
-| `server.js` | Zero-dependency static server + authoritative `/api/v1` (replay-verified scores, leaderboard, achievements, telemetry, presence). |
+| `server.js` | Local dev server: zero-dependency static server + authoritative `/api/v1` (replay-verified scores, leaderboard, achievements, telemetry, presence). |
 | `css/style.css` | Tokens, screens, board, responsive breakpoints, accessibility modes. |
 | `assets/` | Key art and results illustrations (`title-art.webp`, `results-harmonized.webp`, `results-resists.webp`). |
 | `sfx/` | 15 Opus clips; `manifest.txt` (canonical), `manifest.json` (generator input), `manifest.md` (generated). |
@@ -235,8 +236,9 @@ Conventions per https://wiki.starhermit.com/. `index.html` loads `starhermit-sdk
 | Settings KV | Yes | Volumes, palette, theme, graphics, reduced motion, larger text, contrast, left-handed tray, hold-to-confirm, hints, liquid labels and wide camera are patched to the game's settings KV on change (debounced, after the KV was read) and applied at boot, where the platform value wins. |
 | Controls | Yes | Eleven keyboard actions are declared as `control.*` in `starhermit.txt` (`event.code` values); keydown routes through the bindings, signed in `loadBindings()` applies the player's platform bindings, the Help table shows the effective keys, Settings › Controls remaps a key (persisted locally and with `setControls`, a code moves away from any other action) and **Reset keys to defaults** calls `resetControls`. |
 | Invite link | Yes | Signed in, the title shows **Invite a friend**, copying `StarHermit.inviteLink()` with a confirmation toast. |
-| Own-server routes | Signed in only | `server.js` is the distribution's static server and the game's authoritative API (JSON stores under `data/`, `CP_DATA_DIR` override, `PORT` env): `GET /api/v1/time` (daily date and countdown use `serverNow()`), `POST /api/v1/activity` / `presence`, replay-validated `POST /api/v1/scores` for completed ranked rounds with `GET /api/v1/leaderboard?board&scope`, idempotent `POST /api/v1/achievements {key}`, and opt-in telemetry (only `start`, `tutorial-step`, `round-end`, `retry`, `settings-change`, `error`, aggregate counts). Offline: local bests and local achievements only. |
-| Platform leaderboards / achievements | No | `server.js` is not a platform session script, so it reports no platform scores or achievements. |
+| Own-server routes | Signed in only | `server.js` is the distribution's static server and the game's authoritative API (JSON stores under `data/`, `CP_DATA_DIR` override, `PORT` env): `GET /api/v1/time` (daily date and countdown use `serverNow()`), `POST /api/v1/activity` / `presence`, replay-validated `POST /api/v1/scores` (kept in `server.js`, no longer called by the client) and `GET /api/v1/leaderboard?board&scope`, idempotent `POST /api/v1/achievements {key}`, and opt-in telemetry (only `start`, `tutorial-step`, `round-end`, `retry`, `settings-change`, `error`, aggregate counts). Offline: local bests and local achievements only. |
+| Platform leaderboard | Signed in only | Every completed ranked round (challenge, daily, score chase) posts its total through `StarHermit.submitScores` (a practice session whose `score-script.js` posts it to the `high-score` board: integer, higher is better, 0–100,000), then reads the player's rank from `StarHermit.leaderboard('high-score')`. The results screen shows "Leaderboard rank: #N" (or "Score posted to the leaderboard." / "Score not posted to the leaderboard.", nine locales in `js/platform-strings.js`). Standalone, ranked rounds keep a local best only and the results screen shows no leaderboard line. |
+| Platform achievements | No | Achievements are local (plus the own-server route). |
 | Sessions, matchmaking, session invites, chat, replays, realtime, voice | No | Solo ruleset; nothing realtime. |
 
 New platform strings (sign in, invite, toasts) ship in all nine locales (`js/platform-strings.js`, picked from `navigator.language`).
@@ -283,7 +285,7 @@ QA bar, as checkable statements:
 
 - English only; no locale switch (§10).
 - The `friends` leaderboard scope returns the global list; filtering depends on the host.
-- A failed ranked submission shows "Ranked submission is queued for when the host responds", but nothing is retried later; the replay is only archived locally.
+- A failed leaderboard post shows "Score not posted to the leaderboard." and is not retried; the replay is only archived locally.
 - The Voice slider drives an empty bus; the Haptics toggle is disabled (no vibration is used).
 - Boards above 6 colours use best-first search, so par is near-optimal rather than exact, and `hint` may return a non-optimal move when the 60 000-node budget runs out.
 - The solver's `stateKey` collapses vessel permutations (sound for existence, unverified for optimality) and `createGame` could in theory exhaust its retries (never observed in fuzzing) — see `knownissues.md`.
