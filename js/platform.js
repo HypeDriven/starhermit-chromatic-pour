@@ -8,9 +8,10 @@
 // local, telemetry is dropped.
 //
 // Signed in, a ranked round's total goes to the StarHermit `high-score`
-// leaderboard through StarHermit.submitScores (score-script.js). The
-// leaderboard/achievement/telemetry/activity/presence/time routes are the
-// game's own server backend (server.js) and are only called when signed in. Telemetry consent is read through `opts.getConsent` (default:
+// leaderboard through StarHermit.submitScores (score-script.js), and the
+// clock syncs from GET /api/v1/time. The leaderboard/achievement/telemetry/
+// activity/presence routes of the local dev server (server.js) are not called
+// (OWN_API below). Telemetry consent is read through `opts.getConsent` (default:
 // storage.loadSettings().telemetryConsent); only funnel events are allowed.
 
 import { loadBestScore, saveBestScore, loadSettings } from './storage.js';
@@ -25,6 +26,11 @@ const ALLOWED_TELEMETRY = new Set([
 
 const sdk = () => globalThis.StarHermit || null;
 const SAVE_DEBOUNCE_MS = 2000;
+// The deployed platform script is score-script.js, so server.js's own routes
+// (activity, presence, leaderboard, achievements, telemetry) do not exist in
+// production: the adapter does not call them. Only GET /api/v1/time (served by
+// the platform) is read.
+const OWN_API = false;
 
 // Aggregate-safe telemetry payload: keep numbers/booleans/short enum strings;
 // never raw text or pointer trails.
@@ -145,13 +151,13 @@ export async function initPlatform(opts = {}) {
   function activityStart() {
     if (!isHosted() || sessionActive) return;
     sessionActive = true;
-    apiFetch('/api/v1/activity', { method: 'POST', body: { event: 'start' } }).catch(() => {});
+    if (OWN_API) apiFetch('/api/v1/activity', { method: 'POST', body: { event: 'start' } }).catch(() => {});
   }
 
   function activityEnd() {
     if (!isHosted() || !sessionActive) return;
     sessionActive = false;
-    apiFetch('/api/v1/activity', { method: 'POST', body: { event: 'end' }, keepalive: true }).catch(() => {});
+    if (OWN_API) apiFetch('/api/v1/activity', { method: 'POST', body: { event: 'end' }, keepalive: true }).catch(() => {});
   }
 
   function heartbeat() {
@@ -159,7 +165,7 @@ export async function initPlatform(opts = {}) {
     const now = Date.now();
     if (now - lastHeartbeat < HEARTBEAT_MIN_MS) return;
     lastHeartbeat = now;
-    apiFetch('/api/v1/presence', { method: 'POST', body: { event: 'heartbeat' } }).catch(() => {});
+    if (OWN_API) apiFetch('/api/v1/presence', { method: 'POST', body: { event: 'heartbeat' } }).catch(() => {});
   }
 
   function localLeaderboard(board) {
@@ -207,7 +213,7 @@ export async function initPlatform(opts = {}) {
   }
 
   async function fetchLeaderboard(board, boardScope = 'global') {
-    if (isHosted()) {
+    if (OWN_API && isHosted()) {
       try {
         const r = await apiFetch(
           '/api/v1/leaderboard?board=' + encodeURIComponent(board)
@@ -223,7 +229,7 @@ export async function initPlatform(opts = {}) {
   }
 
   function flushTelemetry(keepalive = false) {
-    if (!isHosted() || telemetryQueue.length === 0) return;
+    if (!OWN_API || !isHosted() || telemetryQueue.length === 0) return;
     const events = telemetryQueue.splice(0, telemetryQueue.length);
     apiFetch('/api/v1/telemetry', { method: 'POST', body: { events }, keepalive })
       .catch(() => { /* offline: dropped by design */ });
@@ -290,6 +296,7 @@ export async function initPlatform(opts = {}) {
   // Durable achievement delivery; the server stores unlocks idempotently.
   async function unlockAchievement(key) {
     if (!isHosted()) return { error: 'offline' };
+    if (!OWN_API) return { error: 'unsupported' };
     try {
       const r = await apiFetch('/api/v1/achievements', { method: 'POST', body: { key } });
       if (r.json && typeof r.json.error === 'string') return { error: r.json.error };
