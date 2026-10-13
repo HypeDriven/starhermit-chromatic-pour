@@ -106,7 +106,7 @@ export function createAudio(settings = {}, { audioSeed = 'default' } = {}) {
     return shot({
       ...rest,
       build(dest, t0) {
-        const o = ctx.createOscillator();
+        const o = (globalThis.GameOptions ? globalThis.GameOptions.trackSource(ctx.createOscillator(), null) : ctx.createOscillator());
         o.type = type;
         o.frequency.setValueAtTime(freq, t0);
         if (freqEnd) o.frequency.exponentialRampToValueAtTime(freqEnd, t0 + rest.dur);
@@ -121,7 +121,7 @@ export function createAudio(settings = {}, { audioSeed = 'default' } = {}) {
     return shot({
       ...rest,
       build(dest, t0) {
-        const src = ctx.createBufferSource();
+        const src = (globalThis.GameOptions ? globalThis.GameOptions.trackSource(ctx.createBufferSource(), null) : ctx.createBufferSource());
         src.buffer = noiseBuf;
         src.loop = true;
         const f = ctx.createBiquadFilter();
@@ -260,7 +260,7 @@ export function createAudio(settings = {}, { audioSeed = 'default' } = {}) {
     const buf = sampleBuffers.get(name);
     if (!buf) return false;
     try {
-      const src = ctx.createBufferSource();
+      const src = (globalThis.GameOptions ? globalThis.GameOptions.trackSource(ctx.createBufferSource(), name) : ctx.createBufferSource());
       src.buffer = buf;
       src.playbackRate.value = pitch;
       src.connect(buses.effects);
@@ -282,13 +282,13 @@ export function createAudio(settings = {}, { audioSeed = 'default' } = {}) {
     const nodes = [];
     const lfos = [];
     for (const mult of [1, 1.5]) {
-      const o = ctx.createOscillator();
+      const o = (globalThis.GameOptions ? globalThis.GameOptions.trackSource(ctx.createOscillator(), null) : ctx.createOscillator());
       o.type = def.type;
       o.frequency.value = def.base * mult;
       o.detune.value = (musicRng.next() - 0.5) * 2 * def.detune;
       const og = ctx.createGain();
       og.gain.value = mult === 1 ? 0.6 : 0.25;
-      const lfo = ctx.createOscillator();
+      const lfo = (globalThis.GameOptions ? globalThis.GameOptions.trackSource(ctx.createOscillator(), null) : ctx.createOscillator());
       lfo.frequency.value = def.lfo * (mult === 1 ? 1 : 1.7);
       const lfoGain = ctx.createGain();
       lfoGain.gain.value = 0.15;
@@ -302,7 +302,7 @@ export function createAudio(settings = {}, { audioSeed = 'default' } = {}) {
       lfos.push(lfo);
     }
     // faint filtered-noise "room tone"
-    const src = ctx.createBufferSource();
+    const src = (globalThis.GameOptions ? globalThis.GameOptions.trackSource(ctx.createBufferSource(), null) : ctx.createBufferSource());
     src.buffer = noiseBuf;
     src.loop = true;
     const f = ctx.createBiquadFilter();
@@ -383,7 +383,7 @@ export function createAudio(settings = {}, { audioSeed = 'default' } = {}) {
         const g = ctx.createGain();
         g.gain.value = volumes[name];
         g.connect(master);
-        buses[name] = g;
+        buses[name] = (globalThis.GameOptions ? globalThis.GameOptions.tagBus(g, name) : g);
       }
       noiseBuf = makeNoiseBuffer();
       if (!manifestRequested) {

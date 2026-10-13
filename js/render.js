@@ -1932,13 +1932,13 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
       buildPost(cssW, cssH);
     }
     if (composer) {
-      try { composer.render(dtS); return; } catch (_) {
+      try { (globalThis.GameOptions ? globalThis.GameOptions.draw(composer.renderer, () => composer.render(dtS)) : composer.render(dtS)); return; } catch (_) {
         postFailed = true;
         composer.dispose();
         composer = null;
       }
     }
-    renderer.render(scene, camera);
+    (globalThis.GameOptions ? globalThis.GameOptions.draw(renderer, () => renderer.render(scene, camera)) : renderer.render(scene, camera));
   }
 
   const panSpring = { x: 0, v: 0, target: 0 };
