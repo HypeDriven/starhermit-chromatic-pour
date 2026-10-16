@@ -805,7 +805,7 @@ await testAsync('platform: cloud save game:<slug> round-trip, settings KV patch,
   const { platform, calls, sdk } = await withHost({ hash: `#game_token=${jwt}` }, (url, init) => {
     const m = init.method || 'GET';
     if (url === PROFILE_URL) return { status: 200, body: { nickname: 'Al' } };
-    if (url === SAVE_URL && m === 'PUT') { saved = Buffer.from(JSON.parse(init.body).dataBase64, 'base64'); return { status: 204 }; }
+    if (url === SAVE_URL && m === 'PUT') { saved = Buffer.from(JSON.parse(init.body).dataBase64, 'base64'); return { status: 200, body: { etag: '"v1"' } }; }
     if (url === SAVE_URL) return saved ? { status: 200, bytes: new Uint8Array(saved) } : { status: 404 };
     if (url === '/api/v1/games/chromatic-pour/settings' && m === 'PATCH') { kv = { ...kv, ...JSON.parse(init.body).settings }; return { status: 200, body: { settings: kv } }; }
     if (url === '/api/v1/games/chromatic-pour/settings') return { status: 200, body: { settings: kv } };
@@ -898,6 +898,74 @@ test('gfx strings: all nine locales cover every key; locale matching', () => {
   }
   eq(pickLocale('es-MX'), 'es-419'); eq(pickLocale('fr-CA'), 'fr-CA'); eq(pickLocale('fr'), 'fr-FR');
   eq(pickLocale('pt-PT'), 'pt-BR'); eq(pickLocale('en-AU'), 'en-GB'); eq(pickLocale('ja-JP'), 'en-US');
+});
+
+test('storage: cloud-save conflict merge keeps the better of both devices', () => {
+  const local = {
+    journey: { j01: { stars: 2, bestMoves: 12, bestMs: 9000 }, j02: { stars: 1, bestMoves: 30, bestMs: 50000 } },
+    dailies: { '2026-10-01': { score: 500, moves: 20, ms: 1 } },
+    achievements: { 'first-pour-complete': '2026-10-02T00:00:00Z' },
+    mastery: { completed: ['j05'] }, sessionsPlayed: 4, lastStreakDay: '2026-10-05', streak: 3,
+  };
+  const remote = {
+    journey: { j01: { stars: 3, bestMoves: 14, bestMs: 7000 }, j03: { stars: 2, bestMoves: 20, bestMs: 1 } },
+    dailies: { '2026-10-01': { score: 400, moves: 10, ms: 1 }, '2026-10-02': { score: 90, moves: 9, ms: 1 } },
+    achievements: { 'first-pour-complete': '2026-10-01T00:00:00Z', 'streak-3': '2026-10-03T00:00:00Z' },
+    mastery: { completed: ['j10'] }, sessionsPlayed: 9, lastStreakDay: '2026-10-04', streak: 5,
+  };
+  const m = storage.mergeProgression(local, remote);
+  deepEq(m.journey.j01, { stars: 3, bestMoves: 12, bestMs: 7000 }, 'best of each stage record');
+  assert(m.journey.j02 && m.journey.j03, 'stages from both devices kept');
+  eq(m.dailies['2026-10-01'].score, 500, 'better daily score');
+  assert(m.dailies['2026-10-02'], 'remote-only daily kept');
+  eq(m.achievements['first-pour-complete'], '2026-10-01T00:00:00Z', 'earliest unlock');
+  assert(m.achievements['streak-3'], 'remote achievement kept');
+  deepEq(m.mastery.completed.sort(), ['j05', 'j10'], 'mastery union');
+  eq(m.sessionsPlayed, 9, 'larger session count');
+  eq(m.lastStreakDay, '2026-10-05', 'most recent streak day');
+  eq(m.streak, 3, 'streak of the most recent side');
+});
+
+await testAsync('platform: a save conflict reloads, merges and re-saves the cloud doc', async () => {
+  const jwt = fakeJwt({ sub: USER_ID, game_scope: 'chromatic-pour', exp: Math.floor(Date.now() / 1000) + 3600 });
+  const SAVE_URL = '/api/v1/me/cloud-saves/' + encodeURIComponent('game:chromatic-pour');
+  let cloud = null;
+  let puts = 0;
+  let refuseNext = false;
+  const { platform, sdk } = await withHost({ hash: `#game_token=${jwt}` }, (url, init) => {
+    const m = init.method || 'GET';
+    if (url === PROFILE_URL) return { status: 200, body: { nickname: 'Al' } };
+    if (url === SAVE_URL + '/info') return { status: 200, body: cloud ? { exists: true, etag: '"v' + puts + '"' } : { exists: false } };
+    if (url === SAVE_URL && m === 'PUT') {
+      puts += 1;
+      if (refuseNext) { refuseNext = false; return { status: 412, body: { error: 'precondition-failed' } }; }
+      cloud = Buffer.from(JSON.parse(init.body).dataBase64, 'base64');
+      return { status: 200, body: { etag: '"v' + puts + '"' } };
+    }
+    if (url === SAVE_URL) return cloud ? { status: 200, bytes: new Uint8Array(cloud) } : { status: 404 };
+    return null;
+  });
+  eq(await platform.loadCloud(), null, 'empty slot');
+  // "Another device": its progress reaches the cloud first.
+  storage.saveProgression({ journey: { j02: { stars: 3, bestMoves: 9, bestMs: 5000 } }, sessionsPlayed: 7 });
+  platform.saveCloud(storage.exportSaveDoc());
+  eq(await platform.flushCloud(), true, 'other device saved');
+  // This device then writes its own progress; the server refuses (stale version).
+  storage.saveProgression({ journey: { j01: { stars: 1, bestMoves: 20, bestMs: 9000 } }, sessionsPlayed: 2 });
+  refuseNext = true;
+  const conflicted = new Promise((r) => sdk.on('saveconflict', r));
+  platform.saveCloud(storage.exportSaveDoc());
+  await platform.flushCloud();
+  await conflicted;
+  for (let i = 0; i < 100 && puts < 3; i++) await new Promise((r) => setTimeout(r, 5));
+  const prog = storage.loadProgression();
+  assert(prog.journey.j01 && prog.journey.j02, 'both devices\' stages kept locally');
+  eq(prog.sessionsPlayed, 7, 'larger session count');
+  eq(puts, 3, 'merged doc saved again');
+  const saved = storage.verifyDoc(await platform.loadCloud());
+  assert(saved.progression.journey.j01 && saved.progression.journey.j02, 'cloud holds the merge');
+  eq(sdk.saveConflicted(), false, 'writes unblocked');
+  storage.saveProgression({});
 });
 
 // ---------------------------------------------------------------------------

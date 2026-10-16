@@ -73,8 +73,35 @@ function sendJson(res, status, obj) {
   res.end(body);
 }
 
+// Signed-in state the language pass reads back: the account's preferred
+// language, the per-player settings KV (ui.language) and filed reports.
+const hostState = { preferredLanguage: 'en-US', settings: {}, reports: [] };
+function readBody(req) {
+  return new Promise((resolve) => {
+    let data = '';
+    req.on('data', (c) => { data += c; });
+    req.on('end', () => { try { resolve(data ? JSON.parse(data) : null); } catch { resolve(null); } });
+  });
+}
+
 function mockApi(req, res, pathname) {
   hostCalls.push({ path: pathname, auth: req.headers.authorization || null });
+  if (req.method === 'GET' && pathname === '/api/v1/me/language') return sendJson(res, 200, { preferredLanguage: hostState.preferredLanguage });
+  if (req.method === 'GET' && pathname === '/api/v1/me/cloud-saves/game:chromatic-pour/info') return sendJson(res, 200, { exists: false });
+  if (req.method === 'PUT' && pathname === '/api/v1/me/cloud-saves/game:chromatic-pour') return sendJson(res, 200, { etag: '"v' + hostCalls.length + '"' });
+  const settingKey = pathname.match(/^\/api\/v1\/games\/chromatic-pour\/settings\/(.+)$/);
+  if (req.method === 'PUT' && settingKey) {
+    return readBody(req).then((body) => { hostState.settings[decodeURIComponent(settingKey[1])] = body && body.value; sendJson(res, 200, {}); });
+  }
+  if (req.method === 'PATCH' && pathname === '/api/v1/games/chromatic-pour/settings') {
+    return readBody(req).then((body) => { Object.assign(hostState.settings, (body && body.settings) || {}); sendJson(res, 200, { settings: hostState.settings }); });
+  }
+  if (req.method === 'POST' && pathname === '/api/v1/games/chromatic-pour/reports') {
+    return readBody(req).then((body) => {
+      hostState.reports.push(body);
+      sendJson(res, 201, { id: 'r1', kind: (body && body.kind) || 'bug', status: 'open', createdAt: new Date().toISOString() });
+    });
+  }
   if (req.method === 'GET' && pathname === '/api/v1/time') return sendJson(res, 200, { epochMs: Date.now() });
   if (req.method === 'GET' && pathname === `/api/v1/users/${HOST_USER_ID}/profile`) {
     if (req.headers.authorization !== `Bearer ${HOST_TOKEN}`) return sendJson(res, 401, { error: 'unauthorized' });
@@ -84,7 +111,7 @@ function mockApi(req, res, pathname) {
   // empty cloud-save slot, no stored settings, default controls.
   if (req.method === 'GET' && pathname === `/api/v1/users/${HOST_USER_ID}/avatar`) { res.writeHead(204).end(); return; }
   if (req.method === 'GET' && pathname === '/api/v1/me/cloud-saves/game:chromatic-pour') { res.writeHead(204).end(); return; }
-  if (req.method === 'GET' && pathname === '/api/v1/games/chromatic-pour/settings') return sendJson(res, 200, { settings: {} });
+  if (req.method === 'GET' && pathname === '/api/v1/games/chromatic-pour/settings') return sendJson(res, 200, { settings: hostState.settings });
   if (req.method === 'GET' && pathname === '/api/v1/games/chromatic-pour/controls') return sendJson(res, 200, { actions: [] });
   return sendJson(res, 404, { error: 'not-found' });
 }
@@ -409,6 +436,84 @@ async function runHostedPass(browser) {
   }
 }
 
+// Signed in, the account prefers Canadian French: Automatic resolves to fr-CA.
+// Mid-round (paused), Settings → Language switches to Italian: every visible
+// string re-renders in place, the round keeps its moves, ui.language is saved
+// to the account, and Report a problem files a bug report.
+async function runLanguagePass(browser, vpName, contextOpts) {
+  const context = await browser.newContext(contextOpts);
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
+  page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errors.push(`console ${m.type()}: ${m.text()}`); });
+  hostState.preferredLanguage = 'fr-CA';
+  hostState.settings = {};
+  hostState.reports = [];
+  try {
+    await step(`[${vpName}] Language: Automatic follows the StarHermit preference; live switch mid-round; ui.language; report a problem`, async () => {
+      await page.goto('about:blank');
+      await page.goto(`${baseUrl}/index.html#game_token=${HOST_TOKEN}`, { waitUntil: 'load' });
+      await page.waitForSelector('#screen-title:not([hidden])', { timeout: 15000 });
+      await page.waitForFunction(() => document.documentElement.lang === 'fr-CA'
+        && document.querySelector('#screen-title .btn-play-label')?.textContent === 'Jouer', null, { timeout: 10000 });
+      await page.locator('#screen-title .card-journey').click();
+      await page.waitForSelector('#screen-setup:not([hidden])');
+      if ((await page.locator('#screen-setup h1').textContent()) !== 'Le voyage') throw new Error('setup not in French');
+      await page.locator('#screen-setup .stage-cell').first().click();
+      await waitForState(page, 'active');
+      const { move } = await solveFromDom(page);
+      await clickVessel(page, move[0]);
+      await clickVessel(page, move[1]);
+      await waitPourSettled(page);
+      const moves = await movesText(page);
+      if (moves !== '1 coup') throw new Error(`HUD not French: ${moves}`);
+      await page.keyboard.press('p');
+      await waitForState(page, 'paused');
+      if ((await page.locator('#pause-title').textContent()) !== 'En pause — l’alambic se repose') throw new Error('pause not French');
+      await page.locator('.cp-overlay button', { hasText: 'Paramètres' }).click();
+      await page.waitForSelector('#screen-settings:not([hidden])');
+      const choice = page.locator('[data-game-language="choice"]');
+      await choice.waitFor({ state: 'attached', timeout: 5000 });
+      if ((await choice.count()) !== 1) throw new Error('expected exactly one language selector');
+      await choice.scrollIntoViewIfNeeded();
+      const auto = await choice.locator('option').first().textContent();
+      if (auto !== 'Automatique — Français (Canada)') throw new Error('Automatic label not resolved: ' + auto);
+      await choice.selectOption('it-IT');
+      await page.waitForFunction(() => document.documentElement.lang === 'it-IT'
+        && document.querySelector('#screen-settings h1').textContent === 'Impostazioni'
+        && document.querySelector('#screen-play .cp-moves').textContent === '1 mossa'
+        && document.querySelector('#screen-play .cp-tray button').textContent === 'Annulla'
+        && document.querySelector('label[for="gfx-preset"], #gfx-section .cp-field span')?.textContent === 'Qualità');
+      await page.waitForFunction(() => /Salvato/.test(document.querySelector('[data-game-language="status"]')?.textContent || ''));
+      if (hostState.settings['ui.language']?.choice !== 'it-IT') throw new Error('ui.language not saved: ' + JSON.stringify(hostState.settings));
+      const report = page.locator('[data-game-report="title"]');
+      await report.scrollIntoViewIfNeeded();
+      await report.fill('Test report');
+      await page.click('[data-game-report="send"]');
+      await page.waitForFunction(() => /Grazie/.test(document.querySelector('[data-game-report="status"]').textContent));
+      if (!hostState.reports[0] || hostState.reports[0].kind !== 'bug') throw new Error('report not posted: ' + JSON.stringify(hostState.reports));
+      const spill = await page.evaluate(() => {
+        const w = document.documentElement.clientWidth;
+        return [...document.querySelectorAll('#screen-settings select, #screen-settings input, #screen-settings button, #screen-settings textarea, #screen-settings h2')]
+          .filter((n) => n.offsetParent && n.getBoundingClientRect().right > w + 1).map((n) => n.outerHTML.slice(0, 60));
+      });
+      if (spill.length) throw new Error('settings controls cut off: ' + spill.join(','));
+      await page.screenshot({ path: SHOT('language', vpName) });
+      await choice.selectOption('auto');
+      await page.waitForFunction(() => document.documentElement.lang === 'fr-CA');
+      await page.locator('#screen-settings button', { hasText: 'Retour' }).last().click();
+      await page.waitForSelector('.cp-overlay:has(#pause-title)');
+      if ((await page.locator('#pause-title').textContent()) !== 'En pause — l’alambic se repose') throw new Error('pause overlay not re-rendered');
+      if ((await movesText(page)) !== '1 coup') throw new Error('round changed during the language switch');
+      await page.locator('.cp-overlay button', { hasText: 'Quitter vers l’accueil' }).click();
+      await waitForState(page, 'title');
+    });
+    checkErrors(`${vpName} language pass`, errors);
+  } finally {
+    await context.close();
+  }
+}
+
 const server = await startServer();
 const port = server.address().port;
 const baseUrl = `http://127.0.0.1:${port}`;
@@ -428,7 +533,9 @@ try {
     deviceScaleFactor: 2,
   });
   await runHostedPass(browser);
-  console.log('\nE2E PASS — full playthrough on desktop + mobile + hosted nickname, no page errors');
+  await runLanguagePass(browser, 'desktop', { viewport: { width: 1280, height: 800 } });
+  await runLanguagePass(browser, 'mobile', { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
+  console.log('\nE2E PASS — full playthrough on desktop + mobile + hosted nickname + language/report, no page errors');
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));

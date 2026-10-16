@@ -98,13 +98,16 @@ export function pixelRatio(r, dpr, adaptiveScale = 1) {
 }
 
 /** Short cost summary, e.g. "1024² shadows · bloom · SMAA · 1280×720 px". */
+// Cost-summary words go through the game language (js/i18n.js) when loaded.
+const T = (k, v) => (globalThis.CPI18N ? globalThis.CPI18N.T(k, v) : String(k).replace(/\{(\w+)\}/g, (m, x) => (v && x in v ? v[x] : m)));
+
 export function describe(r, pixels) {
   const parts = [
-    r.shadows === 'off' ? 'no shadows' : `${SHADOW_MAP[r.shadows]}² shadows`,
-    r.ao === 'off' ? null : r.ao === 'high' ? 'full AO' : 'AO',
-    r.bloom === 'on' ? 'bloom' : null,
-    r.reflections === 'on' ? 'reflections' : null,
-    r.antialias === 'off' ? 'no AA' : r.antialias.toUpperCase(),
+    r.shadows === 'off' ? T('no shadows') : T('{size}² shadows', { size: SHADOW_MAP[r.shadows] }),
+    r.ao === 'off' ? null : r.ao === 'high' ? T('full AO') : 'AO',
+    r.bloom === 'on' ? T('bloom') : null,
+    r.reflections === 'on' ? T('reflections') : null,
+    r.antialias === 'off' ? T('no AA') : r.antialias.toUpperCase(),
     pixels ? `${pixels[0]}×${pixels[1]} px` : null,
   ];
   return parts.filter(Boolean).join(' · ');

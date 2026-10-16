@@ -322,6 +322,55 @@ export function exportSaveDoc() {
   return checksumDoc({ settings: loadSettings(), progression: loadProgression() });
 }
 
+// Cloud-save conflict (another device saved first): merge the two progression
+// records so neither side loses anything — best stars and fastest/fewest-move
+// records per stage, the better score per daily, every achievement (earliest
+// unlock), every mastery stage, the larger session count and the streak of
+// whichever side played most recently. Settings stay this device's.
+export function mergeProgression(local, remote) {
+  const a = normalizeProgression(local);
+  const b = normalizeProgression(remote);
+  const minOf = (x, y) => (x == null ? (y ?? null) : y == null ? x : Math.min(x, y));
+  const journey = { ...b.journey };
+  for (const [id, rec] of Object.entries(a.journey)) {
+    const o = journey[id];
+    journey[id] = !o ? rec : {
+      stars: Math.max(rec.stars || 0, o.stars || 0),
+      bestMoves: minOf(rec.bestMoves, o.bestMoves),
+      bestMs: minOf(rec.bestMs, o.bestMs),
+    };
+  }
+  const dailies = { ...b.dailies };
+  for (const [day, rec] of Object.entries(a.dailies)) {
+    const o = dailies[day];
+    if (!o || (rec.score ?? -Infinity) > (o.score ?? -Infinity)
+      || (rec.score === o.score && (rec.moves ?? Infinity) < (o.moves ?? Infinity))) dailies[day] = rec;
+  }
+  const achievements = { ...b.achievements };
+  for (const [k, ts] of Object.entries(a.achievements)) {
+    achievements[k] = achievements[k] && String(achievements[k]) < String(ts) ? achievements[k] : ts;
+  }
+  const streakSide = String(a.lastStreakDay || '') > String(b.lastStreakDay || '') ? a
+    : String(b.lastStreakDay || '') > String(a.lastStreakDay || '') ? b
+      : (a.streak >= b.streak ? a : b);
+  return normalizeProgression({
+    ...b, ...a,
+    journey, dailies, achievements,
+    mastery: { completed: [...new Set([...b.mastery.completed, ...a.mastery.completed])] },
+    sessionsPlayed: Math.max(a.sessionsPlayed, b.sessionsPlayed),
+    lastStreakDay: streakSide.lastStreakDay,
+    streak: streakSide.streak,
+  });
+}
+
+/** Merge a (checksummed) cloud doc into local progression; true when it verified. */
+export function mergeCloudDoc(doc) {
+  const data = verifyDoc(doc);
+  if (!data || !isPlainObject(data.progression)) return false;
+  saveProgression(mergeProgression(loadProgression(), data.progression));
+  return true;
+}
+
 // On checksum/shape failure the incoming document is preserved untouched under
 // a conflict key (local data is never overwritten), and {ok:false, conflict}
 // is returned so the UI can ask the player which snapshot to keep.

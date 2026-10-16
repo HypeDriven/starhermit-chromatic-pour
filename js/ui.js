@@ -17,10 +17,40 @@ import { platformStrings, fmtPlatform } from './platform-strings.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
+// Localization (js/i18n.js, window.CPI18N): English source strings are keys.
+// T() translates now; N() only marks a string for translation at display time.
+const fill = (s, v) => String(s).replace(/\{(\w+)\}/g, (m, k) => (v && k in v ? String(v[k]) : m));
+const T = (key, vars) => (globalThis.CPI18N ? globalThis.CPI18N.T(key, vars) : fill(key, vars));
+const N = (key) => key;
+const curLang = () => (globalThis.CPI18N && globalThis.CPI18N.lang) || 'en-US';
+
+// Live text: el() accepts a function for text/aria-label/title/placeholder/alt;
+// it is re-evaluated by relocalizeLive() when the game language changes.
+const LIVE_ATTRS = new Set(['text', 'aria-label', 'title', 'placeholder', 'alt']);
+const liveText = new Set();
+function applyLive(entry) {
+  const v = String(entry.fn());
+  if (entry.key === 'text') { if (entry.node.textContent !== v) entry.node.textContent = v; }
+  else entry.node.setAttribute(entry.key, v);
+}
+function relocalizeLive() {
+  for (const entry of liveText) {
+    if (!entry.node.isConnected) { liveText.delete(entry); continue; }
+    applyLive(entry);
+  }
+}
+
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
+  if (liveText.size > 4000) for (const e of liveText) if (!e.node.isConnected) liveText.delete(e);
   for (const [key, value] of Object.entries(attrs)) {
     if (value == null || value === false) continue;
+    if (typeof value === 'function' && LIVE_ATTRS.has(key)) {
+      const entry = { node, key, fn: value };
+      applyLive(entry);
+      liveText.add(entry);
+      continue;
+    }
     if (key === 'class') node.className = value;
     else if (key === 'text') node.textContent = value;
     else if (key === 'dataset') Object.assign(node.dataset, value);
@@ -55,9 +85,9 @@ function fmtTime(ms) {
 
 function fmtAway(ms) {
   const mins = Math.floor(ms / 60000);
-  if (mins < 1) return `${Math.round(ms / 1000)} seconds`;
-  if (mins < 60) return `${mins} minute${mins === 1 ? '' : 's'}`;
-  return `${Math.floor(mins / 60)} h ${mins % 60} min`;
+  if (mins < 1) return T('{n} seconds', { n: Math.round(ms / 1000) });
+  if (mins < 60) return T(mins === 1 ? '{n} minute' : '{n} minutes', { n: mins });
+  return T('{h} h {m} min', { h: Math.floor(mins / 60), m: mins % 60 });
 }
 
 function fmtScore(n) {
@@ -151,35 +181,36 @@ function prettyCodes(codes) {
 }
 
 const BINDING_LABELS = {
-  focusNext: 'Focus next vessel',
-  focusPrev: 'Focus previous vessel',
-  focusUp: 'Focus vessel above',
-  focusDown: 'Focus vessel below',
-  confirm: 'Select / pour',
-  cancel: 'Cancel selection',
-  pause: 'Pause',
-  undo: 'Undo',
-  hint: 'Hint',
-  restart: 'Restart round',
-  cameraReset: 'Recenter view',
+  focusNext: N('Focus next vessel'),
+  focusPrev: N('Focus previous vessel'),
+  focusUp: N('Focus vessel above'),
+  focusDown: N('Focus vessel below'),
+  confirm: N('Select / pour'),
+  cancel: N('Cancel selection'),
+  pause: N('Pause'),
+  undo: N('Undo'),
+  hint: N('Hint'),
+  restart: N('Restart round'),
+  cameraReset: N('Recenter view'),
 };
+const bindingLabel = (action) => T(BINDING_LABELS[action]);
 
 const ERROR_MESSAGES = {
-  script: 'Something in the laboratory cracked. Your progress is safe — try that again.',
-  promise: 'A background task failed. Your progress is safe — try that again.',
-  webgl: 'The 3D shelf could not be drawn — playing in classic view.',
-  audio: 'Audio could not start. The game remains fully playable in silence.',
-  content: 'The level ledger failed to load. Reload to try again.',
-  network: 'The host is unreachable. Ranked features are paused; local play continues.',
-  storage: 'Progress could not be saved locally on this device.',
-  performance: 'The shelf was struggling to keep up, so visual quality was lowered.',
+  script: N('Something in the laboratory cracked. Your progress is safe — try that again.'),
+  promise: N('A background task failed. Your progress is safe — try that again.'),
+  webgl: N('The 3D shelf could not be drawn — playing in classic view.'),
+  audio: N('Audio could not start. The game remains fully playable in silence.'),
+  content: N('The level ledger failed to load. Reload to try again.'),
+  network: N('The host is unreachable. Ranked features are paused; local play continues.'),
+  storage: N('Progress could not be saved locally on this device.'),
+  performance: N('The shelf was struggling to keep up, so visual quality was lowered.'),
 };
 
 const TERMINAL_HEADLINES = {
-  'all-uniform': 'Shelf harmonized!',
-  'move-limit-exceeded': 'Out of moves',
-  'time-limit-exceeded': 'Time ran out',
-  abandoned: 'Round abandoned',
+  'all-uniform': N('Shelf harmonized!'),
+  'move-limit-exceeded': N('Out of moves'),
+  'time-limit-exceeded': N('Time ran out'),
+  abandoned: N('Round abandoned'),
 };
 
 // ---------------------------------------------------------------------------
@@ -195,14 +226,14 @@ export function createUI({ root, services }) {
   const clearRenderer = services.clearRenderer || (() => {});
   const updateRenderer = services.updateRenderer || (() => {});
   const graphicsInfo = services.graphicsInfo || (() => ({ gpu: '', detected: 'balanced', webgl: isWebGL }));
-  const gfxLocale = pickLocale((typeof navigator !== 'undefined' && navigator.language) || 'en-US');
-  const GT = gfxStrings(gfxLocale);
+  // Graphics and StarHermit strings follow the game language (CPI18N).
+  let GT = gfxStrings(pickLocale(curLang()));
   if (!settings.graphics || typeof settings.graphics !== 'object') settings.graphics = { ...DEFAULT_GRAPHICS };
 
   // -- live settings normalization (bindings may be absent in older saves) --
   if (settings.gamepadRemap === undefined) settings.gamepadRemap = settings.bindings?.gamepadRemap || null;
   settings.bindings = normalizeBindings(settings.bindings);
-  const PT = platformStrings((typeof navigator !== 'undefined' && navigator.language) || 'en-US');
+  let PT = platformStrings(curLang());
   let codeMap = null;
   function actionFor(e) {
     if (!codeMap) {
@@ -256,7 +287,7 @@ export function createUI({ root, services }) {
 
   function colorDef(i) {
     const p = palette();
-    return p[i % Math.max(1, p.length)] || { name: `Color ${i + 1}`, hex: '#888' };
+    return p[i % Math.max(1, p.length)] || { name: T('Color {n}', { n: i + 1 }), hex: '#888' };
   }
 
   function themeDef(themeId) {
@@ -331,11 +362,11 @@ export function createUI({ root, services }) {
   const brand = el('div', { class: 'cp-brand', text: 'Chromatic Pour' });
   const drawerLeftBtn = el('button', {
     class: 'cp-iconbtn cp-drawer-toggle cp-drawer-left', type: 'button',
-    'aria-label': 'Toggle objective panel', text: '☰',
+    'aria-label': () => T('Toggle objective panel'), text: '☰',
   });
   const drawerRightBtn = el('button', {
     class: 'cp-iconbtn cp-drawer-toggle cp-drawer-right', type: 'button',
-    'aria-label': 'Toggle actions panel', text: '⚗',
+    'aria-label': () => T('Toggle actions panel'), text: '⚗',
   });
   const profileChip = el('button', { class: 'cp-profilechip', type: 'button' });
   const topbar = el('header', { class: 'cp-topbar' },
@@ -402,12 +433,12 @@ export function createUI({ root, services }) {
 
   let errorBannerTimer = 0;
   function showError(category) {
-    const message = ERROR_MESSAGES[category] || ERROR_MESSAGES.script;
+    const message = T(ERROR_MESSAGES[category] || ERROR_MESSAGES.script);
     errorBanner.textContent = '';
     errorBanner.append(
-      el('span', { text: message }),
+      el('span', { text: () => T(ERROR_MESSAGES[category] || ERROR_MESSAGES.script) }),
       el('button', {
-        class: 'cp-iconbtn', type: 'button', 'aria-label': 'Dismiss', text: '×',
+        class: 'cp-iconbtn', type: 'button', 'aria-label': () => T('Dismiss'), text: '×',
         onclick: () => { errorBanner.hidden = true; },
       }));
     errorBanner.hidden = false;
@@ -443,10 +474,10 @@ export function createUI({ root, services }) {
         profileChip.append(img);
       }
       profileChip.append(el('span', { text: profile.displayName }));
-      profileChip.setAttribute('aria-label', `Signed in as ${profile.displayName}. Account options`);
+      profileChip.setAttribute('aria-label', T('Signed in as {name}. Account options', { name: profile.displayName }));
     } else {
-      profileChip.append(el('span', { text: 'Guest — sign in' }));
-      profileChip.setAttribute('aria-label', 'Playing as guest. Sign in');
+      profileChip.append(el('span', { text: T('Guest — sign in') }));
+      profileChip.setAttribute('aria-label', T('Playing as guest. Sign in'));
     }
   }
 
@@ -464,7 +495,7 @@ export function createUI({ root, services }) {
   profileChip.addEventListener('click', async () => {
     audio?.play('ui');
     if (platform.profile) {
-      notify(`Signed in as ${platform.profile.displayName}.`);
+      notify(T('Signed in as {name}.', { name: platform.profile.displayName }));
       return;
     }
     let res = null;
@@ -474,10 +505,10 @@ export function createUI({ root, services }) {
     if (res?.redirecting) return; // StarHermit sign-in page; returns with a token
     updateProfileChip();
     if (platform.profile && platform.profile.displayName) {
-      announce(`Signed in as ${platform.profile.displayName}.`);
+      announce(T('Signed in as {name}.', { name: platform.profile.displayName }));
       transition('profile-ready', { owner: 'ui', reason: 'sign-in' });
     } else {
-      notify('Sign-in is unavailable right now — playing as guest. Progress stays on this device.');
+      notify(T('Sign-in is unavailable right now — playing as guest. Progress stays on this device.'));
     }
   });
 
@@ -492,24 +523,24 @@ export function createUI({ root, services }) {
     s.textContent = '';
 
     const wordmark = el('h1', { class: 'cp-wordmark' },
-      el('span', { class: 'cp-wordmark-a', text: 'Chromatic' }),
+      el('span', { class: 'cp-wordmark-a', text: 'Chromatic' }), // game name: never translated
       el('span', { class: 'cp-wordmark-b', text: 'Pour' }));
 
     const playBtn = el('button', {
       class: 'btn btn-primary btn-play', type: 'button', 'data-autofocus': true,
       onclick: () => { audio?.unlock(); audio?.play('ui'); onPlay(); },
-    }, el('span', { class: 'btn-play-label', text: 'Play' }),
-       el('span', { class: 'btn-play-sub', text: playSubLabel() }));
+    }, el('span', { class: 'btn-play-label', text: () => T('Play') }),
+       el('span', { class: 'btn-play-sub', text: () => playSubLabel() }));
 
     // Daily card
     const dailyDate = todayKey(platform.serverNow);
     const dailyBest = storage.loadBestScore(`daily-${dailyDate}`);
     const dailyCard = el('button', { class: 'card card-daily', type: 'button', onclick: () => openSetup('daily') },
-      el('span', { class: 'card-kicker', text: 'Daily draught' }),
+      el('span', { class: 'card-kicker', text: () => T('Daily draught') }),
       el('span', { class: 'card-title', text: dailyDate }),
-      el('span', { class: 'card-line', text: dailyBest
-        ? `Best score ${fmtScore(dailyBest.score ?? dailyBest)}`
-        : 'Not attempted yet' }),
+      el('span', { class: 'card-line', text: () => (dailyBest
+        ? T('Best score {score}', { score: fmtScore(dailyBest.score ?? dailyBest) })
+        : T('Not attempted yet')) }),
       el('span', { class: 'card-line card-countdown', text: '' }));
 
     // Journey card
@@ -517,22 +548,22 @@ export function createUI({ root, services }) {
     const stars = totalJourneyStars(prog);
     const nextStage = nextJourneyStage(prog);
     const journeyCard = el('button', { class: 'card card-journey', type: 'button', onclick: () => openSetup('journey') },
-      el('span', { class: 'card-kicker', text: 'Journey' }),
-      el('span', { class: 'card-title', text: `${stars} / ${(content.JOURNEY || []).length * 3} stars` }),
-      el('span', { class: 'card-line', text: nextStage ? `Next: ${nextStage.name}` : 'The whole shelf glows. Mastery awaits.' }));
+      el('span', { class: 'card-kicker', text: () => T('Journey') }),
+      el('span', { class: 'card-title', text: () => T('{n} / {total} stars', { n: stars, total: (content.JOURNEY || []).length * 3 }) }),
+      el('span', { class: 'card-line', text: () => (nextStage ? T('Next: {name}', { name: levelName(nextStage) }) : T('The whole shelf glows. Mastery awaits.')) }));
 
     const smallBtn = (label, mode) => el('button', {
-      class: 'btn btn-ghost card-small', type: 'button', text: label,
+      class: 'btn btn-ghost card-small', type: 'button', text: () => T(label),
       onclick: () => openSetup(mode),
     });
 
-    const navRow = el('nav', { class: 'cp-title-nav', 'aria-label': 'More' },
-      el('button', { class: 'btn btn-ghost', type: 'button', text: 'Help', onclick: () => { renderHelp(); showScreen('help'); } }),
-      el('button', { class: 'btn btn-ghost', type: 'button', text: 'Settings', onclick: () => { renderSettings(); showScreen('settings'); } }),
-      el('button', { class: 'btn btn-ghost', type: 'button', text: 'Progress', onclick: () => { transition('progression', { owner: 'ui', reason: 'title-nav' }); } }),
-      el('button', { class: 'btn btn-ghost', type: 'button', text: 'All modes', onclick: () => { transition('mode-select', { owner: 'ui', reason: 'title-nav' }); } }),
-      platform.hosted ? el('button', { class: 'btn btn-ghost', type: 'button', id: 'cp-invite', text: PT.invite, onclick: () => inviteFriend() }) : null,
-      platform.canSignIn?.() ? el('button', { class: 'btn btn-primary', type: 'button', id: 'cp-signin', text: PT.signIn, onclick: () => platform.signIn() }) : null);
+    const navRow = el('nav', { class: 'cp-title-nav', 'aria-label': () => T('More') },
+      el('button', { class: 'btn btn-ghost', type: 'button', text: () => T('Help'), onclick: () => { renderHelp(); showScreen('help'); } }),
+      el('button', { class: 'btn btn-ghost', type: 'button', text: () => T('Settings'), onclick: () => { renderSettings(); showScreen('settings'); } }),
+      el('button', { class: 'btn btn-ghost', type: 'button', text: () => T('Progress'), onclick: () => { transition('progression', { owner: 'ui', reason: 'title-nav' }); } }),
+      el('button', { class: 'btn btn-ghost', type: 'button', text: () => T('All modes'), onclick: () => { transition('mode-select', { owner: 'ui', reason: 'title-nav' }); } }),
+      platform.hosted ? el('button', { class: 'btn btn-ghost', type: 'button', id: 'cp-invite', text: () => PT.invite, onclick: () => inviteFriend() }) : null,
+      platform.canSignIn?.() ? el('button', { class: 'btn btn-primary', type: 'button', id: 'cp-signin', text: () => PT.signIn, onclick: () => platform.signIn() }) : null);
 
     const titleArt = el('img', {
       class: 'cp-title-art', src: 'assets/title-art.webp', alt: '', 'aria-hidden': 'true',
@@ -544,12 +575,12 @@ export function createUI({ root, services }) {
 
     s.append(
       el('div', { class: 'cp-title-hero' }, titleFrame, wordmark,
-        el('p', { class: 'cp-tagline', text: 'An alchemist’s sorting ritual. Pour every hue home.' }),
+        el('p', { class: 'cp-tagline', text: () => T('An alchemist’s sorting ritual. Pour every hue home.') }),
         playBtn,
-        !isWebGL ? el('p', { class: 'cp-nowebgl', text: '3D shelf unavailable — playing in classic view.' }) : null),
+        !isWebGL ? el('p', { class: 'cp-nowebgl', text: () => T('3D shelf unavailable — playing in classic view.') }) : null),
       el('div', { class: 'cp-title-cards' },
         dailyCard, journeyCard,
-        smallBtn('Practice', 'practice'), smallBtn('Challenge', 'challenge'), smallBtn('Score chase', 'score-chase')),
+        smallBtn(N('Practice'), 'practice'), smallBtn(N('Challenge'), 'challenge'), smallBtn(N('Score chase'), 'score-chase')),
       navRow);
 
     titleRefs = { dailyCountdown: dailyCard.querySelector('.card-countdown'), playBtn };
@@ -557,18 +588,34 @@ export function createUI({ root, services }) {
 
   function playSubLabel() {
     const prog = storage.loadProgression();
-    if (!settings.tutorialDone) return 'Begin with a lesson';
+    if (!settings.tutorialDone) return T('Begin with a lesson');
     const next = nextJourneyStage(prog);
-    if (settings.lastMode && settings.lastMode !== 'journey') return `Return to ${modeTitle(settings.lastMode)}`;
-    if (next) return `Continue the Journey — ${next.name}`;
-    return 'Choose a mode';
+    if (settings.lastMode && settings.lastMode !== 'journey') return T('Return to {mode}', { mode: modeTitle(settings.lastMode) });
+    if (next) return T('Continue the Journey — {name}', { name: levelName(next) });
+    return T('Choose a mode');
   }
 
   function modeTitle(kind) {
-    return {
-      journey: 'Journey', daily: 'Daily draught', practice: 'Practice',
-      challenge: 'Challenge', 'score-chase': 'Score chase', lesson: 'Learn',
-    }[kind] || 'Play';
+    return T({
+      journey: N('Journey'), daily: N('Daily draught'), practice: N('Practice'),
+      challenge: N('Challenge'), 'score-chase': N('Score chase'), lesson: N('Learn'),
+    }[kind] || N('Play'));
+  }
+
+  // Display name of a level in the current language (level data stays English).
+  function levelName(def) {
+    if (!def) return '';
+    const JOURNEY_SUFFIX = {
+      Prelude: N('{name} Prelude'), Draught: N('{name} Draught'), Crucible: N('{name} Crucible'),
+      Alembic: N('{name} Alembic'), Tincture: N('{name} Tincture'),
+    };
+    if (def.kind === 'journey' && def.nameParts) return T(JOURNEY_SUFFIX[def.nameParts[1]] || '{name}', { name: def.nameParts[0] });
+    if (def.kind === 'daily' && /^daily-/.test(def.id || '')) return T('Daily Draught {date}', { date: String(def.id).slice(6) });
+    if (def.kind === 'practice' && def.difficulty) {
+      const d = (content.DIFFICULTIES || []).find((x) => x.id === def.difficulty);
+      return T('{level} Practice', { level: T(d ? d.label : def.difficulty) });
+    }
+    return T(def.name || '');
   }
 
   function onPlay() {
@@ -595,7 +642,7 @@ export function createUI({ root, services }) {
     const h = Math.floor(ms / 3600000);
     const m = Math.floor((ms % 3600000) / 60000);
     const sec = Math.floor((ms % 60000) / 1000);
-    const text = `Next draught in ${h}h ${String(m).padStart(2, '0')}m ${String(sec).padStart(2, '0')}s`;
+    const text = T('Next draught in {h}h {m}m {s}s', { h, m: String(m).padStart(2, '0'), s: String(sec).padStart(2, '0') });
     if (text !== dailyCountdownLast) {
       dailyCountdownLast = text;
       titleRefs.dailyCountdown.textContent = text;
@@ -607,31 +654,31 @@ export function createUI({ root, services }) {
   // -------------------------------------------------------------------------
 
   const MODE_CARDS = [
-    { kind: 'lesson', name: 'Learn', rules: 'Guided lessons that teach one rule at a time — you perform each move.', duration: '~5 minutes', ranked: false, assists: 'Hints always on' },
-    { kind: 'journey', name: 'Journey', rules: 'Forty authored stages of growing subtlety. Earn up to three stars each.', duration: '2–4 min per stage', ranked: false, assists: 'Undo & hints allowed' },
-    { kind: 'daily', name: 'Daily draught', rules: 'One shared seed per UTC day. Same shelf for every alchemist.', duration: '~3 minutes', ranked: true, assists: 'Assists allowed, recorded' },
-    { kind: 'practice', name: 'Practice', rules: 'Your difficulty, your seed. Experiment freely.', duration: 'You choose', ranked: false, assists: 'Undo & hints allowed' },
-    { kind: 'challenge', name: 'Challenge', rules: 'Constrained brews: move limits, time limits, no undo.', duration: '2–5 minutes', ranked: true, assists: 'As the constraint allows' },
-    { kind: 'score-chase', name: 'Score chase', rules: 'One board, endless rivalry. Climb the global or friends ladder.', duration: '~3 minutes', ranked: true, assists: 'Assists allowed, recorded' },
+    { kind: 'lesson', name: N('Learn'), rules: N('Guided lessons that teach one rule at a time — you perform each move.'), duration: N('~5 minutes'), ranked: false, assists: N('Hints always on') },
+    { kind: 'journey', name: N('Journey'), rules: N('Forty authored stages of growing subtlety. Earn up to three stars each.'), duration: N('2–4 min per stage'), ranked: false, assists: N('Undo & hints allowed') },
+    { kind: 'daily', name: N('Daily draught'), rules: N('One shared seed per UTC day. Same shelf for every alchemist.'), duration: N('~3 minutes'), ranked: true, assists: N('Assists allowed, recorded') },
+    { kind: 'practice', name: N('Practice'), rules: N('Your difficulty, your seed. Experiment freely.'), duration: N('You choose'), ranked: false, assists: N('Undo & hints allowed') },
+    { kind: 'challenge', name: N('Challenge'), rules: N('Constrained brews: move limits, time limits, no undo.'), duration: N('2–5 minutes'), ranked: true, assists: N('As the constraint allows') },
+    { kind: 'score-chase', name: N('Score chase'), rules: N('One board, endless rivalry. Climb the global or friends ladder.'), duration: N('~3 minutes'), ranked: true, assists: N('Assists allowed, recorded') },
   ];
 
   function buildModeSelect() {
     const s = screens.modes;
     s.textContent = '';
     s.append(
-      el('h1', { text: 'Choose your working' }),
-      el('p', { class: 'screen-lede', text: 'Every mode uses the same rule: pour contiguous color layers until each vessel is empty or holds one color.' }),
+      el('h1', { text: () => T('Choose your working') }),
+      el('p', { class: 'screen-lede', text: () => T('Every mode uses the same rule: pour contiguous color layers until each vessel is empty or holds one color.') }),
       el('div', { class: 'cp-mode-grid' },
         MODE_CARDS.map((m) => el('button', {
           class: 'card card-mode', type: 'button',
           'data-autofocus': m.kind === 'journey' ? true : null,
           onclick: () => { audio?.play('ui'); openSetup(m.kind); },
         },
-          el('span', { class: 'card-title', text: m.name }),
-          m.ranked ? el('span', { class: 'badge badge-ranked', text: 'Ranked' }) : el('span', { class: 'badge', text: 'Unranked' }),
-          el('span', { class: 'card-line', text: m.rules }),
-          el('span', { class: 'card-line card-dim', text: `${m.duration} · ${m.assists}` })))),
-      el('button', { class: 'btn btn-ghost', type: 'button', text: 'Back to title', onclick: () => transition('title', { owner: 'ui', reason: 'modes-back' }) }));
+          el('span', { class: 'card-title', text: () => T(m.name) }),
+          m.ranked ? el('span', { class: 'badge badge-ranked', text: () => T('Ranked') }) : el('span', { class: 'badge', text: () => T('Unranked') }),
+          el('span', { class: 'card-line', text: () => T(m.rules) }),
+          el('span', { class: 'card-line card-dim', text: () => `${T(m.duration)} · ${T(m.assists)}` })))),
+      el('button', { class: 'btn btn-ghost', type: 'button', text: () => T('Back to title'), onclick: () => transition('title', { owner: 'ui', reason: 'modes-back' }) }));
   }
 
   // -------------------------------------------------------------------------
@@ -667,24 +714,24 @@ export function createUI({ root, services }) {
     };
     (builders[kind] || setupJourney)(s);
     s.append(el('button', {
-      class: 'btn btn-ghost', type: 'button', text: 'All modes',
+      class: 'btn btn-ghost', type: 'button', text: () => T('All modes'),
       onclick: () => transition('mode-select', { owner: 'ui', reason: 'setup-back' }),
     }));
   }
 
   function setupHeader(s, title, lede, rankedFlag) {
     s.append(
-      el('h1', { text: title }),
-      el('p', { class: 'screen-lede', text: lede }),
+      el('h1', { text: typeof title === 'function' ? title : () => T(title) }),
+      el('p', { class: 'screen-lede', text: () => T(lede) }),
       el('p', { class: 'cp-setup-meta' },
         rankedFlag
-          ? el('span', { class: 'badge badge-ranked', text: 'Ranked — validated by replay' })
-          : el('span', { class: 'badge', text: 'Unranked — no effect on ratings' })));
+          ? el('span', { class: 'badge badge-ranked', text: () => T('Ranked — validated by replay') })
+          : el('span', { class: 'badge', text: () => T('Unranked — no effect on ratings') })));
   }
 
   // -- Journey -------------------------------------------------------------
   function setupJourney(s) {
-    setupHeader(s, 'The Journey', 'Forty stages of growing subtlety. Mastery stages (◆) test combined mechanics.', false);
+    setupHeader(s, N('The Journey'), N('Forty stages of growing subtlety. Mastery stages (◆) test combined mechanics.'), false);
     const prog = storage.loadProgression();
     const journey = content.JOURNEY || [];
     const firstOpen = Math.max(0, journey.findIndex((e) => !(prog.journey || {})[e.id]));
@@ -697,9 +744,9 @@ export function createUI({ root, services }) {
         class: `stage-cell${locked ? ' locked' : ''}${entry.mastery ? ' mastery' : ''}`,
         type: 'button', role: 'listitem', disabled: locked,
         'data-autofocus': i === (firstOpen === -1 ? 0 : firstOpen) ? true : null,
-        'aria-label': locked
-          ? `Stage ${i + 1}, locked`
-          : `Stage ${i + 1}, ${entry.name}${entry.mastery ? ', mastery' : ''}, ${stars} of 3 stars`,
+        'aria-label': () => (locked
+          ? T('Stage {n}, locked', { n: i + 1 })
+          : T(entry.mastery ? 'Stage {n}, {name}, mastery, {stars} of 3 stars' : 'Stage {n}, {name}, {stars} of 3 stars', { n: i + 1, name: levelName(entry), stars })),
         onclick: () => {
           audio?.play('ui');
           startLevel(journeyLevel(entry), { ranked: false, boardKey: null });
@@ -722,11 +769,11 @@ export function createUI({ root, services }) {
 
   // -- Practice --------------------------------------------------------------
   function setupPractice(s) {
-    setupHeader(s, 'Practice bench', 'Pick a difficulty and a seed. The seed is the recipe — share it to share the exact shelf.', false);
+    setupHeader(s, N('Practice bench'), N('Pick a difficulty and a seed. The seed is the recipe — share it to share the exact shelf.'), false);
     const diffs = content.DIFFICULTIES || [];
     const seedInput = el('input', {
       class: 'cp-seed-input', type: 'text', value: practiceSeed, maxlength: 48,
-      'aria-label': 'Practice seed', spellcheck: 'false',
+      'aria-label': () => T('Practice seed'), spellcheck: 'false',
     });
     seedInput.addEventListener('change', () => {
       practiceSeed = seedInput.value.trim() || freshSeed();
@@ -754,17 +801,17 @@ export function createUI({ root, services }) {
             }
           },
         },
-          el('span', { class: 'card-title', text: d.label || d.id }),
-          el('span', { class: 'card-line', text: `${d.colorCount} colors · ${d.emptyVessels} empty vessels` }),
-          el('span', { class: 'card-line card-dim', text: d.desc || '' })))),
+          el('span', { class: 'card-title', text: () => T(d.label || d.id) }),
+          el('span', { class: 'card-line', text: () => T('{colors} colors · {empty} empty vessels', { colors: d.colorCount, empty: d.emptyVessels }) }),
+          el('span', { class: 'card-line card-dim', text: () => (d.desc ? T(d.desc) : '') })))),
       el('div', { class: 'cp-seed-row' },
-        el('label', { class: 'cp-seed-label' }, el('span', { text: 'Seed' }), seedInput),
+        el('label', { class: 'cp-seed-label' }, el('span', { text: () => T('Seed') }), seedInput),
         el('button', {
-          class: 'btn btn-ghost', type: 'button', text: 'Re-roll',
+          class: 'btn btn-ghost', type: 'button', text: () => T('Re-roll'),
           onclick: () => { practiceSeed = freshSeed(); seedInput.value = practiceSeed; audio?.play('ui'); },
         })),
       el('button', {
-        class: 'btn btn-primary', type: 'button', text: 'Begin practice',
+        class: 'btn btn-primary', type: 'button', text: () => T('Begin practice'),
         onclick: () => {
           practiceSeed = seedInput.value.trim() || practiceSeed;
           startLevel(content.practiceLevel(practiceDifficulty, practiceSeed), { ranked: false, boardKey: `practice-${practiceDifficulty}` });
@@ -774,7 +821,7 @@ export function createUI({ root, services }) {
 
   // -- Challenge ---------------------------------------------------------------
   function setupChallenge(s) {
-    setupHeader(s, 'Challenges', 'Constrained brews for exacting alchemists. Constraints are part of the leaderboard recipe.', true);
+    setupHeader(s, N('Challenges'), N('Constrained brews for exacting alchemists. Constraints are part of the leaderboard recipe.'), true);
     const list = content.CHALLENGES || [];
     s.append(el('div', { class: 'cp-mode-grid' },
       list.map((c, i) => el('button', {
@@ -782,9 +829,9 @@ export function createUI({ root, services }) {
         'data-autofocus': i === 0 ? true : null,
         onclick: () => startLevel(challengeLevel(c), { ranked: true, boardKey: c.id }),
       },
-        el('span', { class: 'card-title', text: c.name }),
-        el('span', { class: 'card-line', text: c.desc || '' }),
-        el('span', { class: 'card-line card-dim', text: constraintText(c.constraints) })))));
+        el('span', { class: 'card-title', text: () => T(c.name) }),
+        el('span', { class: 'card-line', text: () => (c.desc ? T(c.desc) : '') }),
+        el('span', { class: 'card-line card-dim', text: () => constraintText(c.constraints) })))));
   }
 
   function challengeLevel(c) {
@@ -796,10 +843,10 @@ export function createUI({ root, services }) {
 
   function constraintText(constraints = {}) {
     const parts = [];
-    if (constraints.moveLimit) parts.push(`Move limit ${constraints.moveLimit}`);
-    if (constraints.timeLimitMs) parts.push(`Time limit ${fmtTime(constraints.timeLimitMs)}`);
-    if (constraints.noUndo) parts.push('No undo');
-    return parts.length ? parts.join(' · ') : 'No special constraints';
+    if (constraints.moveLimit) parts.push(T('Move limit {n}', { n: constraints.moveLimit }));
+    if (constraints.timeLimitMs) parts.push(T('Time limit {time}', { time: fmtTime(constraints.timeLimitMs) }));
+    if (constraints.noUndo) parts.push(T('No undo'));
+    return parts.length ? parts.join(' · ') : T('No special constraints');
   }
 
   // -- Daily ----------------------------------------------------------------------
@@ -807,37 +854,42 @@ export function createUI({ root, services }) {
     const date = todayKey(platform.serverNow);
     const level = content.dailyLevel(date);
     try { content.parFor(level); } catch { /* par shown once resolved */ }
-    setupHeader(s, `Daily draught — ${date}`, 'One shared shelf per UTC day, synchronized to the host clock. Identical recipe for every alchemist.', true);
+    setupHeader(s, () => T('Daily draught — {date}', { date }), N('One shared shelf per UTC day, synchronized to the host clock. Identical recipe for every alchemist.'), true);
     const best = storage.loadBestScore(level.id);
     s.append(
       el('div', { class: 'panel' },
-        el('p', { text: `${level.colorCount} colors · par ${level.parMoves} moves · ${constraintText(level.constraints)}` }),
-        el('p', { class: 'card-dim', text: best ? `Your best today: ${fmtScore(best.score ?? best)}` : 'You have not attempted today’s draught.' })),
+        el('p', { text: () => `${T('{colors} colors · par {par} moves', { colors: level.colorCount, par: level.parMoves })} · ${constraintText(level.constraints)}` }),
+        el('p', { class: 'card-dim', text: () => (best ? T('Your best today: {score}', { score: fmtScore(best.score ?? best) }) : T('You have not attempted today’s draught.')) })),
       el('button', {
-        class: 'btn btn-primary', type: 'button', 'data-autofocus': true, text: 'Pour today’s draught',
+        class: 'btn btn-primary', type: 'button', 'data-autofocus': true, text: () => T('Pour today’s draught'),
         onclick: () => startLevel({ ...level, kind: 'daily' }, { ranked: true, boardKey: level.id }),
       }));
   }
 
   // -- Score chase ------------------------------------------------------------------
   function setupScoreChase(s) {
-    setupHeader(s, 'Score chase', 'One board, endless rivalry. Boards marked daily rotate at UTC midnight; the evergreen board never changes.', true);
+    setupHeader(s, N('Score chase'), N('One board, endless rivalry. Boards marked daily rotate at UTC midnight; the evergreen board never changes.'), true);
     // Board keys are the level ids themselves — the authoritative API requires
     // board === levelId and re-simulates the seeded board server-side.
     const chaseDailySeed = `chase-${todayKey(platform.serverNow)}`;
     const boards = [
-      { key: `practice-master-${chaseDailySeed}`, scope: 'global', label: 'Global daily', seed: chaseDailySeed },
-      { key: 'practice-master-chase-evergreen', scope: 'global', label: 'Global all-time', seed: 'chase-evergreen' },
-      { key: 'practice-master-chase-evergreen', scope: 'friends', label: 'Friends', seed: 'chase-evergreen' },
+      { key: `practice-master-${chaseDailySeed}`, scope: 'global', label: N('Global daily'), seed: chaseDailySeed },
+      { key: 'practice-master-chase-evergreen', scope: 'global', label: N('Global all-time'), seed: 'chase-evergreen' },
+      { key: 'practice-master-chase-evergreen', scope: 'friends', label: N('Friends'), seed: 'chase-evergreen' },
     ];
     const tableWrap = el('div', { class: 'cp-leaderboard' });
-    const bestLine = el('p', { class: 'card-dim' });
+    let bestLineBoard = null;
+    const bestLine = el('p', { class: 'card-dim', text: () => {
+      if (!bestLineBoard) return '';
+      const best = storage.loadBestScore(bestLineBoard.key);
+      return best ? T('Your best on this board: {score}', { score: fmtScore(best.score ?? best) }) : T('No local best on this board yet.');
+    } });
 
     async function refreshBoard(board) {
       scoreChaseBoard = board.key;
       scoreChaseScope = board.scope;
       tableWrap.textContent = '';
-      tableWrap.append(el('p', { class: 'card-dim', text: 'Consulting the ledger…' }));
+      tableWrap.append(el('p', { class: 'card-dim', text: () => T('Consulting the ledger…') }));
       let entries;
       try {
         entries = await platform.fetchLeaderboard(board.key, board.scope);
@@ -846,31 +898,32 @@ export function createUI({ root, services }) {
       }
       tableWrap.textContent = '';
       if (!Array.isArray(entries)) {
-        tableWrap.append(el('p', { class: 'card-dim', text: 'The ledger is unreachable — ranked submission resumes when the host responds.' }));
+        tableWrap.append(el('p', { class: 'card-dim', text: () => T('The ledger is unreachable — ranked submission resumes when the host responds.') }));
       } else if (!entries.length) {
-        tableWrap.append(el('p', { class: 'card-dim', text: 'No scores yet. The first name on this board could be yours.' }));
+        tableWrap.append(el('p', { class: 'card-dim', text: () => T('No scores yet. The first name on this board could be yours.') }));
       } else {
         tableWrap.append(el('table', { class: 'cp-table' },
           el('thead', {}, el('tr', {},
-            el('th', { scope: 'col', text: '#' }), el('th', { scope: 'col', text: 'Alchemist' }), el('th', { scope: 'col', text: 'Score' }))),
+            el('th', { scope: 'col', text: '#' }), el('th', { scope: 'col', text: () => T('Alchemist') }), el('th', { scope: 'col', text: () => T('Score') }))),
           el('tbody', {}, entries.slice(0, 10).map((e, i) => el('tr', {},
             el('td', { text: String(i + 1) }),
-            el('td', { text: e.displayName || e.name || 'Alchemist' }),
+            el('td', { text: () => (e.local ? T('you') : (e.displayName || e.name || T('Alchemist'))) }),
             el('td', { text: fmtScore(e.score ?? 0) }))))));
       }
       const best = storage.loadBestScore(board.key);
-      bestLine.textContent = best ? `Your best on this board: ${fmtScore(best.score ?? best)}` : 'No local best on this board yet.';
+      bestLine.textContent = best ? T('Your best on this board: {score}', { score: fmtScore(best.score ?? best) }) : T('No local best on this board yet.');
+      bestLineBoard = board;
     }
 
     s.append(
-      el('div', { class: 'cp-board-picker', role: 'group', 'aria-label': 'Leaderboard' },
+      el('div', { class: 'cp-board-picker', role: 'group', 'aria-label': () => T('Leaderboard') },
         boards.map((b) => el('button', {
-          class: 'btn btn-ghost', type: 'button', text: b.label,
+          class: 'btn btn-ghost', type: 'button', text: () => T(b.label),
           onclick: () => { audio?.play('ui'); refreshBoard(b); },
         }))),
       tableWrap, bestLine,
       el('button', {
-        class: 'btn btn-primary', type: 'button', 'data-autofocus': true, text: 'Chase the score',
+        class: 'btn btn-primary', type: 'button', 'data-autofocus': true, text: () => T('Chase the score'),
         onclick: () => {
           const b = boards.find((x) => x.key === scoreChaseBoard && x.scope === scoreChaseScope) || boards[1];
           const level = content.practiceLevel('master', b.seed);
@@ -882,10 +935,10 @@ export function createUI({ root, services }) {
 
   // -- Learn -------------------------------------------------------------------------
   function setupLearn(s) {
-    setupHeader(s, 'Lessons', 'Short guided brews. Each lesson asks you to perform the rule yourself.', false);
+    setupHeader(s, N('Lessons'), N('Short guided brews. Each lesson asks you to perform the rule yourself.'), false);
     const lessons = content.LESSONS || [];
     if (settings.tutorialDone) {
-      s.append(el('p', { class: 'card-dim', text: 'All lessons completed. Replay any time — the shelf is patient.' }));
+      s.append(el('p', { class: 'card-dim', text: () => T('All lessons completed. Replay any time — the shelf is patient.') }));
     }
     s.append(el('div', { class: 'cp-mode-grid' },
       lessons.map((lesson, i) => el('button', {
@@ -897,8 +950,8 @@ export function createUI({ root, services }) {
           startLevel(lessonLevel(lesson, step, 0), { ranked: false, boardKey: null, tutorial: true });
         },
       },
-        el('span', { class: 'card-title', text: lesson.title || `Lesson ${i + 1}` }),
-        el('span', { class: 'card-line', text: `${lesson.steps.length} step${lesson.steps.length === 1 ? '' : 's'}` })))));
+        el('span', { class: 'card-title', text: () => (lesson.title ? T(lesson.title) : T('Lesson {n}', { n: i + 1 })) }),
+        el('span', { class: 'card-line', text: () => T(lesson.steps.length === 1 ? '{n} step' : '{n} steps', { n: lesson.steps.length }) })))));
   }
 
   function lessonLevel(lesson, step, index) {
@@ -996,13 +1049,14 @@ export function createUI({ root, services }) {
     });
     if (!r) {
       canvas.remove();
-      notify(ERROR_MESSAGES.webgl);
+      notify(T(ERROR_MESSAGES.webgl));
     }
   }
 
   function onCountdown() {
     showScreen('play');
-    const steps = reducedMotion() ? ['Go'] : ['3', '2', '1', 'Go'];
+    const steps = reducedMotion() ? [T('Go')] : ['3', '2', '1', T('Go')];
+    const goLabel = steps[steps.length - 1];
     const overlay = el('div', { class: 'cp-countdown', role: 'status', 'aria-live': 'assertive' });
     overlayLayer.append(overlay);
     let i = 0;
@@ -1019,8 +1073,8 @@ export function createUI({ root, services }) {
       // Restart the pop animation.
       void overlay.offsetWidth;
       overlay.classList.add('pop');
-      announce(steps[i] === 'Go' ? 'Go!' : steps[i]);
-      audio?.play(steps[i] === 'Go' ? 'ui' : 'tick');
+      announce(steps[i] === goLabel ? T('Go!') : steps[i]);
+      audio?.play(steps[i] === goLabel ? 'ui' : 'tick');
       i += 1;
       countdownTimer = setTimeout(advance, stepMs);
     };
@@ -1072,30 +1126,30 @@ export function createUI({ root, services }) {
     const objectiveEl = el('p', { class: 'cp-objective', text: '' });
     const progressEl = el('p', { class: 'cp-progress', text: '' });
     const timerEl = el('p', { class: 'cp-timer', text: '0:00' });
-    const movesEl = el('p', { class: 'cp-moves', text: '0 moves' });
+    const movesEl = el('p', { class: 'cp-moves', text: T('{n} moves', { n: 0 }) });
     const limitBadge = el('p', { class: 'cp-limit-badge', text: '', hidden: true });
 
-    const undoBtn = el('button', { class: 'btn btn-ghost', type: 'button', text: 'Undo', onclick: () => doUndo() });
-    const hintBtn = el('button', { class: 'btn btn-ghost', type: 'button', text: 'Hint', onclick: () => doHint() });
-    const restartBtn = el('button', { class: 'btn btn-ghost', type: 'button', text: 'Restart', onclick: () => doRestart() });
-    const pauseBtn = el('button', { class: 'btn btn-ghost', type: 'button', text: 'Pause', onclick: () => pauseRound() });
+    const undoBtn = el('button', { class: 'btn btn-ghost', type: 'button', text: () => T('Undo'), onclick: () => doUndo() });
+    const hintBtn = el('button', { class: 'btn btn-ghost', type: 'button', text: () => T('Hint'), onclick: () => doHint() });
+    const restartBtn = el('button', { class: 'btn btn-ghost', type: 'button', text: () => T('Restart'), onclick: () => doRestart() });
+    const pauseBtn = el('button', { class: 'btn btn-ghost', type: 'button', text: () => T('Pause'), onclick: () => pauseRound() });
     const skipBtn = el('button', {
-      class: 'btn btn-primary cp-skip', type: 'button', text: 'Skip animation', hidden: true,
+      class: 'btn btn-primary cp-skip', type: 'button', text: () => T('Skip animation'), hidden: true,
       onclick: () => skipPour(),
     });
 
-    const leftRail = el('aside', { class: 'rail rail-left', 'aria-label': 'Objective and progress' },
-      el('h2', { class: 'rail-title', text: 'Working' }),
+    const leftRail = el('aside', { class: 'rail rail-left', 'aria-label': () => T('Objective and progress') },
+      el('h2', { class: 'rail-title', text: () => T('Working') }),
       objectiveEl, progressEl, limitBadge,
-      el('p', { class: 'card-dim cp-levelname', text: levelDef?.name || '' }));
+      el('p', { class: 'card-dim cp-levelname', text: () => levelName(levelDef) }));
 
-    const rightRail = el('aside', { class: 'rail rail-right', 'aria-label': 'Actions and status' },
-      el('h2', { class: 'rail-title', text: 'Actions' }),
+    const rightRail = el('aside', { class: 'rail rail-right', 'aria-label': () => T('Actions and status') },
+      el('h2', { class: 'rail-title', text: () => T('Actions') }),
       undoBtn, hintBtn, restartBtn, pauseBtn,
       el('div', { class: 'rail-status' }, timerEl, movesEl));
 
     const boardEl = el('div', {
-      class: 'cp-board', role: 'group', 'aria-label': 'Vessels on the shelf',
+      class: 'cp-board', role: 'group', 'aria-label': () => T('Vessels on the shelf'),
     });
     const canvasHost = el('div', { class: 'cp-canvas-host', 'aria-hidden': 'true' });
     const playfield = el('div', { class: 'cp-playfield' }, canvasHost, boardEl, skipBtn);
@@ -1103,13 +1157,13 @@ export function createUI({ root, services }) {
     // Compact status strip: the objective / moves / timer that the rails
     // carry on wide layouts, always visible on small screens.
     const stripObjective = el('span', { class: 'cp-strip-objective', text: '' });
-    const stripMoves = el('span', { class: 'cp-strip-moves', text: '0 moves' });
+    const stripMoves = el('span', { class: 'cp-strip-moves', text: T('{n} moves', { n: 0 }) });
     const stripTimer = el('span', { class: 'cp-strip-timer', text: '0:00' });
     const stripLimit = el('span', { class: 'cp-strip-limit', text: '', hidden: true });
     const statusStrip = el('div', { class: 'cp-status-strip', role: 'status', 'aria-live': 'off' },
       stripObjective, stripMoves, stripTimer, stripLimit);
 
-    const tray = el('nav', { class: 'cp-tray', 'aria-label': 'Round actions' });
+    const tray = el('nav', { class: 'cp-tray', 'aria-label': () => T('Round actions') });
     // Tray clones mirror rail buttons so thumb-zone targets stay in sync.
     const trayUndo = cloneAction(undoBtn);
     const trayHint = cloneAction(hintBtn);
@@ -1118,7 +1172,7 @@ export function createUI({ root, services }) {
     tray.append(trayUndo, trayHint, trayPause, trayRestart);
 
     s.append(
-      el('h1', { class: 'sr-only', text: 'Playfield' }),
+      el('h1', { class: 'sr-only', text: () => T('Playfield') }),
       statusStrip,
       el('div', { class: 'cp-play-layout' }, leftRail, playfield, rightRail),
       tray);
@@ -1137,8 +1191,8 @@ export function createUI({ root, services }) {
 
   function cloneAction(btn) {
     const clone = el('button', {
-      class: 'btn btn-ghost tray-btn', type: 'button', text: btn.textContent,
-      'aria-label': btn.textContent,
+      class: 'btn btn-ghost tray-btn', type: 'button', text: () => btn.textContent,
+      'aria-label': () => btn.textContent,
       onclick: () => btn.click(),
     });
     btn._trayClone = clone;
@@ -1152,7 +1206,7 @@ export function createUI({ root, services }) {
       if (!b) continue;
       b.disabled = !canUndo;
       b.setAttribute('aria-disabled', canUndo ? 'false' : 'true');
-      b.title = levelDef?.constraints?.noUndo ? 'This challenge forbids undo.' : '';
+      b.title = levelDef?.constraints?.noUndo ? T('This challenge forbids undo.') : '';
     }
     const hintsOn = !!settings.hintsEnabled;
     for (const b of [playRefs.hintBtn, playRefs.trayHint]) {
@@ -1164,21 +1218,21 @@ export function createUI({ root, services }) {
   function updateHud() {
     if (!playRefs.objectiveEl || !levelDef) return;
     const state = session?.state;
-    playRefs.objectiveEl.textContent = `Unify every vessel — ${levelDef.colorCount} colors`;
+    playRefs.objectiveEl.textContent = T('Unify every vessel — {n} colors', { n: levelDef.colorCount });
     if (state) {
       const done = state.vessels.filter((v, i) => rules.isVesselComplete(state, i)).length;
-      playRefs.progressEl.textContent = `Harmonized ${done} of ${state.vessels.length} vessels`;
-      playRefs.movesEl.textContent = `${state.moves} move${state.moves === 1 ? '' : 's'}`;
-      playRefs.stripObjective.textContent = `${done}/${state.vessels.length} unified`;
+      playRefs.progressEl.textContent = T('Harmonized {done} of {total} vessels', { done, total: state.vessels.length });
+      playRefs.movesEl.textContent = T(state.moves === 1 ? '{n} move' : '{n} moves', { n: state.moves });
+      playRefs.stripObjective.textContent = T('{done}/{total} unified', { done, total: state.vessels.length });
       playRefs.stripMoves.textContent = playRefs.movesEl.textContent;
       const c = state.constraints || {};
       if (c.moveLimit) {
         playRefs.limitBadge.hidden = false;
-        playRefs.limitBadge.textContent = `Moves ${state.moves} / ${c.moveLimit}`;
+        playRefs.limitBadge.textContent = T('Moves {n} / {limit}', { n: state.moves, limit: c.moveLimit });
         playRefs.limitBadge.classList.toggle('danger', state.moves >= c.moveLimit - 3);
       } else if (c.timeLimitMs) {
         playRefs.limitBadge.hidden = false;
-        playRefs.limitBadge.textContent = `Time limit ${fmtTime(c.timeLimitMs)}`;
+        playRefs.limitBadge.textContent = T('Time limit {time}', { time: fmtTime(c.timeLimitMs) });
       } else {
         playRefs.limitBadge.hidden = true;
       }
@@ -1208,7 +1262,7 @@ export function createUI({ root, services }) {
       if (!timeWarned && remaining < 15000 && remaining > 0 && state.status === 'active' && currentState === 'active') {
         timeWarned = true;
         audio?.play('time-warning');
-        announce('Fifteen seconds left.', true);
+        announce(T('Fifteen seconds left.'), true);
       }
     } else {
       playRefs.timerEl.textContent = fmtTime(elapsed);
@@ -1228,11 +1282,11 @@ export function createUI({ root, services }) {
 
   function vesselAriaLabel(state, i) {
     const v = state.vessels[i];
-    if (!v.length) return `Vessel ${i + 1}: empty`;
+    if (!v.length) return T('Vessel {n}: empty', { n: i + 1 });
     const top = colorDef(v[v.length - 1]);
-    let label = `Vessel ${i + 1}: ${v.length} layer${v.length === 1 ? '' : 's'}, top ${top.name}`;
+    let label = T(v.length === 1 ? 'Vessel {n}: {layers} layer, top {color}' : 'Vessel {n}: {layers} layers, top {color}', { n: i + 1, layers: v.length, color: top.name });
     if (v.every((c) => c === v[0])) {
-      label += v.length === state.capacity ? ', harmonized' : ', single color';
+      label += v.length === state.capacity ? T(', harmonized') : T(', single color');
     }
     return label;
   }
@@ -1268,7 +1322,7 @@ export function createUI({ root, services }) {
             style: `--c:${def.hex || `var(--liquid-${color % 10})`}`,
           },
             svgUse(SHAPE_IDS[color % SHAPE_IDS.length], 'layer-shape'),
-            el('span', { class: 'layer-label', text: def.name || `Color ${color + 1}` }));
+            el('span', { class: 'layer-label', text: def.name || T('Color {n}', { n: color + 1 }) }));
           tube.append(layer);
         }
       }
@@ -1339,7 +1393,9 @@ export function createUI({ root, services }) {
       const run = rules.topRun(state, res.index);
       const def = run ? colorDef(run.color) : null;
       audio?.play('select');
-      announce(`Vessel ${res.index + 1} selected${def ? `, ${def.name}, ${run.layers} layer${run.layers === 1 ? '' : 's'}` : ''}.`);
+      announce(def
+        ? T(run.layers === 1 ? 'Vessel {n} selected, {color}, {layers} layer.' : 'Vessel {n} selected, {color}, {layers} layers.', { n: res.index + 1, color: def.name, layers: run.layers })
+        : T('Vessel {n} selected.', { n: res.index + 1 }));
       renderBoard();
       if (r) {
         try { r.setSelected(res.index); r.previewTargets(res.index); } catch { /* decorative */ }
@@ -1348,7 +1404,7 @@ export function createUI({ root, services }) {
     }
     if (res.kind === 'deselected') {
       audio?.play('deselect');
-      announce('Selection cleared.');
+      announce(T('Selection cleared.'));
       renderBoard();
       if (r) { try { r.setSelected(null); r.previewTargets(null); } catch { /* decorative */ } }
       return;
@@ -1360,7 +1416,7 @@ export function createUI({ root, services }) {
     // error
     const idx = res.index ?? session.selected ?? 0;
     audio?.play('invalid');
-    showInvalidOnVessel(idx, res.message || 'That pour is not allowed.');
+    showInvalidOnVessel(idx, res.message ? T(res.message) : T('That pour is not allowed.'));
     if (res.reselected) {
       renderBoard();
       if (r) { try { r.setSelected(idx); r.previewTargets(idx); } catch { /* decorative */ } }
@@ -1414,7 +1470,8 @@ export function createUI({ root, services }) {
     }
 
     if (pourEvt && def) {
-      announce(`Poured ${pourEvt.layers} layer${pourEvt.layers === 1 ? '' : 's'} of ${def.name} from Vessel ${from + 1} to Vessel ${to + 1}.`);
+      announce(T(pourEvt.layers === 1 ? 'Poured {layers} layer of {color} from Vessel {from} to Vessel {to}.' : 'Poured {layers} layers of {color} from Vessel {from} to Vessel {to}.',
+        { layers: pourEvt.layers, color: def.name, from: from + 1, to: to + 1 }));
     }
 
     const r = getRenderer();
@@ -1477,10 +1534,10 @@ export function createUI({ root, services }) {
       updateHud();
       const r = getRenderer();
       if (r) { try { r.setState(session.state); r.setSelected(null); } catch { /* decorative */ } }
-      announce('Last pour undone.');
+      announce(T('Last pour undone.'));
       if (tutorial) advanceTutorial();
     } else {
-      announce(levelDef?.constraints?.noUndo ? 'This challenge forbids undo.' : 'Nothing to undo yet.', true);
+      announce(levelDef?.constraints?.noUndo ? T('This challenge forbids undo.') : T('Nothing to undo yet.'), true);
       audio?.play('invalid');
     }
   }
@@ -1489,7 +1546,7 @@ export function createUI({ root, services }) {
     if (inputLocked || !session || !settings.hintsEnabled) return;
     const h = session.hint();
     if (!h) {
-      announce('No helpful pour found — the shelf may already be settled.', true);
+      announce(T('No helpful pour found — the shelf may already be settled.'), true);
       return;
     }
     audio?.play('hint');
@@ -1498,7 +1555,7 @@ export function createUI({ root, services }) {
     buttons[h.from]?.classList.add('hint-from');
     buttons[h.to]?.classList.add('hint-target');
     const def = colorDef(h.color);
-    announce(`The ledger suggests: pour ${def.name} from Vessel ${h.from + 1} to Vessel ${h.to + 1}.`);
+    announce(T('The ledger suggests: pour {color} from Vessel {from} to Vessel {to}.', { color: def.name, from: h.from + 1, to: h.to + 1 }));
     setTimeout(() => {
       buttons[h.from]?.classList.remove('hint-from');
       buttons[h.to]?.classList.remove('hint-target');
@@ -1515,7 +1572,7 @@ export function createUI({ root, services }) {
     updateHud();
     const r = getRenderer();
     if (r) { try { r.setState(session.state); r.setSelected(null); } catch { /* decorative */ } }
-    announce('Round restarted — same recipe, fresh shelf.');
+    announce(T('Round restarted — same recipe, fresh shelf.'));
     if (tutorial) advanceTutorial();
   }
 
@@ -1541,23 +1598,23 @@ export function createUI({ root, services }) {
   function showPauseOverlay() {
     lastFocusedBeforeOverlay = document.activeElement;
     const resumeBtn = el('button', {
-      class: 'btn btn-primary', type: 'button', 'data-autofocus': true, text: 'Resume',
+      class: 'btn btn-primary', type: 'button', 'data-autofocus': true, text: () => T('Resume'),
       onclick: () => resumeRound(),
     });
-    const restartBtn = el('button', { class: 'btn btn-ghost', type: 'button', text: 'Restart round', onclick: () => { resumeRound(); doRestart(); } });
+    const restartBtn = el('button', { class: 'btn btn-ghost', type: 'button', text: () => T('Restart round'), onclick: () => { resumeRound(); doRestart(); } });
     const settingsBtn = el('button', {
-      class: 'btn btn-ghost', type: 'button', text: 'Settings',
+      class: 'btn btn-ghost', type: 'button', text: () => T('Settings'),
       onclick: () => { renderSettings(); showScreen('settings'); closePauseOverlay(); transition('paused', { owner: 'ui', reason: 'pause-settings' }); },
     });
     const helpBtn = el('button', {
-      class: 'btn btn-ghost', type: 'button', text: 'Help',
+      class: 'btn btn-ghost', type: 'button', text: () => T('Help'),
       onclick: () => { renderHelp(); showScreen('help'); closePauseOverlay(); },
     });
-    const leaveBtn = el('button', { class: 'btn btn-danger', type: 'button', text: 'Leave to title', onclick: () => leaveRound() });
+    const leaveBtn = el('button', { class: 'btn btn-danger', type: 'button', text: () => T('Leave to title'), onclick: () => leaveRound() });
 
     pauseOverlay = el('div', { class: 'cp-overlay', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'pause-title' },
       el('div', { class: 'panel cp-pause-panel' },
-        el('h2', { id: 'pause-title', text: 'Paused — the alembic rests' }),
+        el('h2', { id: 'pause-title', text: () => T('Paused — the alembic rests') }),
         el('div', { class: 'cp-pause-group' }, resumeBtn),
         el('div', { class: 'cp-pause-group' }, restartBtn, settingsBtn, helpBtn),
         el('div', { class: 'cp-pause-group' }, leaveBtn)));
@@ -1628,7 +1685,7 @@ export function createUI({ root, services }) {
   }
 
   // Promise-based confirm dialog (double confirms, import conflicts).
-  function confirmDialog(title, body, confirmLabel = 'Confirm') {
+  function confirmDialog(title, body, confirmLabel = N('Confirm')) {
     return new Promise((resolve) => {
       lastFocusedBeforeOverlay = document.activeElement;
       const done = (value) => {
@@ -1641,13 +1698,13 @@ export function createUI({ root, services }) {
         if (e.key === 'Escape') { e.preventDefault(); done(false); }
         if (e.key === 'Tab') trapFocus(e, dialog);
       };
-      const dialog = el('div', { class: 'cp-overlay', role: 'alertdialog', 'aria-modal': 'true', 'aria-label': title },
+      const dialog = el('div', { class: 'cp-overlay', role: 'alertdialog', 'aria-modal': 'true', 'aria-label': () => T(title) },
         el('div', { class: 'panel cp-confirm-panel' },
-          el('h2', { text: title }),
-          el('p', { text: body }),
+          el('h2', { text: () => T(title) }),
+          el('p', { text: () => T(body) }),
           el('div', { class: 'cp-pause-group' },
-            el('button', { class: 'btn btn-danger', type: 'button', text: confirmLabel, onclick: () => done(true) }),
-            el('button', { class: 'btn btn-ghost', type: 'button', 'data-autofocus': true, text: 'Cancel', onclick: () => done(false) }))));
+            el('button', { class: 'btn btn-danger', type: 'button', text: () => T(confirmLabel), onclick: () => done(true) }),
+            el('button', { class: 'btn btn-ghost', type: 'button', 'data-autofocus': true, text: () => T('Cancel'), onclick: () => done(false) }))));
       document.addEventListener('keydown', onKey, true);
       overlayLayer.append(dialog);
       setTimeout(() => dialog.querySelector('[data-autofocus]')?.focus(), 30);
@@ -1686,7 +1743,7 @@ export function createUI({ root, services }) {
       const meta = (storage.ACHIEVEMENTS || []).find((a) => a.key === key);
       // the results screen lists new unlocks under "Achievements unlocked";
       // a toast here would sit over that list and the results buttons
-      announce(`Achievement unlocked: ${meta ? meta.name : key}`);
+      announce(T('Achievement unlocked: {name}', { name: meta ? T(meta.name) : key }));
       // Durable delivery to the host (idempotent server-side); local unlock
       // already happened in recordResult.
       try { platform.unlockAchievement?.(key)?.catch?.(() => {}); } catch { /* best-effort */ }
@@ -1759,7 +1816,7 @@ export function createUI({ root, services }) {
 
   function onResolving() {
     showScreen('play');
-    const note = el('div', { class: 'cp-resolving', role: 'status', text: 'Settling the shelf…' });
+    const note = el('div', { class: 'cp-resolving', role: 'status', text: () => T('Settling the shelf…') });
     overlayLayer.append(note);
     setTimeout(() => note.remove(), 3000);
   }
@@ -1776,25 +1833,29 @@ export function createUI({ root, services }) {
     const ctx = lastResult;
     if (!ctx || !ctx.result) return;
     const { result } = ctx;
-    const headline = TERMINAL_HEADLINES[ctx.reason] || (ctx.complete ? 'Shelf harmonized!' : 'The shelf resists');
+    const headlineKey = TERMINAL_HEADLINES[ctx.reason] || (ctx.complete ? N('Shelf harmonized!') : N('The shelf resists'));
+    const headline = T(headlineKey);
 
     // Score breakdown table — every labeled component plus the total.
     const rows = (result.score.breakdown || []).map((row) => el('tr', {},
-      el('th', { scope: 'row', text: row.label }),
+      el('th', { scope: 'row', text: () => T(row.label) }),
       el('td', { class: row.value < 0 ? 'neg' : '', text: `${row.value < 0 ? '−' : ''}${fmtScore(Math.abs(row.value))}` })));
     const scoreTable = el('table', { class: 'cp-table cp-score-table' },
-      el('caption', { class: 'sr-only', text: 'Score breakdown' }),
+      el('caption', { class: 'sr-only', text: () => T('Score breakdown') }),
       el('tbody', {}, rows),
       el('tfoot', {}, el('tr', {},
-        el('th', { scope: 'row', text: 'Total' }),
+        el('th', { scope: 'row', text: () => T('Total') }),
         el('td', { text: fmtScore(result.score.total) }))));
 
-    const statLine = el('p', { class: 'cp-result-stats', text:
-      `${result.moves} moves · ${fmtTime(result.elapsedMs)} · ${result.invalidActions} invalid action${result.invalidActions === 1 ? '' : 's'}` });
-    const assistsLine = el('p', { class: 'card-dim', text:
-      result.assists && (result.assists.hints || result.assists.undos)
-        ? `Assists used: ${result.assists.hints} hint${result.assists.hints === 1 ? '' : 's'}, ${result.assists.undos} undo${result.assists.undos === 1 ? '' : 's'}`
-        : 'No assists used — a clean pair of hands.' });
+    const statLine = el('p', { class: 'cp-result-stats', text: () =>
+      `${T(result.moves === 1 ? '{n} move' : '{n} moves', { n: result.moves })} · ${fmtTime(result.elapsedMs)} · ${T(result.invalidActions === 1 ? '{n} invalid action' : '{n} invalid actions', { n: result.invalidActions })}` });
+    const assistsLine = el('p', { class: 'card-dim', text: () =>
+      (result.assists && (result.assists.hints || result.assists.undos)
+        ? T('Assists used: {hints}, {undos}', {
+          hints: T(result.assists.hints === 1 ? '{n} hint' : '{n} hints', { n: result.assists.hints }),
+          undos: T(result.assists.undos === 1 ? '{n} undo' : '{n} undos', { n: result.assists.undos }),
+        })
+        : T('No assists used — a clean pair of hands.')) });
 
     const resultsArt = el('img', {
       class: 'cp-results-art', alt: '', 'aria-hidden': 'true', decoding: 'async',
@@ -1803,10 +1864,10 @@ export function createUI({ root, services }) {
     });
 
     const sections = [
-      el('h1', { text: headline }),
+      el('h1', { text: () => T(headlineKey) }),
       resultsArt,
       ctx.complete && levelDef?.kind === 'journey'
-        ? el('p', { class: 'cp-stars', 'aria-label': `${ctx.stars} of 3 stars`, text: '★'.repeat(ctx.stars) + '☆'.repeat(3 - ctx.stars) })
+        ? el('p', { class: 'cp-stars', 'aria-label': () => T('{n} of 3 stars', { n: ctx.stars }), text: '★'.repeat(ctx.stars) + '☆'.repeat(3 - ctx.stars) })
         : null,
       scoreTable, statLine, assistsLine,
     ];
@@ -1814,10 +1875,10 @@ export function createUI({ root, services }) {
     // Achievements
     if (ctx.newAchievements.length) {
       sections.push(el('div', { class: 'panel' },
-        el('h2', { text: 'Achievements unlocked' }),
+        el('h2', { text: () => T('Achievements unlocked') }),
         el('ul', {}, ctx.newAchievements.map((key) => {
           const meta = (storage.ACHIEVEMENTS || []).find((a) => a.key === key);
-          return el('li', { text: meta ? `${meta.name} — ${meta.desc}` : key });
+          return el('li', { text: () => (meta ? `${T(meta.name)} — ${T(meta.desc)}` : key) });
         }))));
     }
 
@@ -1825,29 +1886,29 @@ export function createUI({ root, services }) {
     // Signed in only: the StarHermit high-score board (standalone shows nothing).
     if (ranked && boardKey && ctx.submission && ctx.submission.platform) {
       const sub = ctx.submission;
-      sections.push(el('p', { id: 'cp-results-lb', class: 'cp-ranked-note' + (sub.accepted ? '' : ' card-dim'), text: !sub.accepted
+      sections.push(el('p', { id: 'cp-results-lb', class: 'cp-ranked-note' + (sub.accepted ? '' : ' card-dim'), text: () => (!sub.accepted
         ? PT.lbNotPosted
-        : sub.rank ? fmtPlatform(PT.lbRank, { rank: sub.rank }) : PT.lbPosted }));
+        : sub.rank ? fmtPlatform(PT.lbRank, { rank: sub.rank }) : PT.lbPosted) }));
     }
     if (ctx.bestBefore != null) {
       const prev = ctx.bestBefore.score ?? ctx.bestBefore;
       const delta = result.score.total - prev;
       if (delta > 0 && ctx.complete) audio?.play('new-best');
-      sections.push(el('p', { class: 'card-dim', text: delta > 0
-        ? `A new personal best — ${fmtScore(delta)} above your previous ${fmtScore(prev)}.`
-        : `Your best remains ${fmtScore(prev)}.` }));
+      sections.push(el('p', { class: 'card-dim', text: () => (delta > 0
+        ? T('A new personal best — {delta} above your previous {prev}.', { delta: fmtScore(delta), prev: fmtScore(prev) })
+        : T('Your best remains {prev}.', { prev: fmtScore(prev) })) }));
     }
 
     // Actions: Replay, Next (always exists), Change mode, Progress.
     const next = nextAction();
     sections.push(el('div', { class: 'cp-result-actions' },
-      el('button', { class: 'btn btn-ghost', type: 'button', text: 'Replay', onclick: () => { audio?.play('ui'); startLevel(levelDef, { ranked, boardKey }); } }),
+      el('button', { class: 'btn btn-ghost', type: 'button', text: () => T('Replay'), onclick: () => { audio?.play('ui'); startLevel(levelDef, { ranked, boardKey }); } }),
       el('button', { class: 'btn btn-primary', type: 'button', 'data-autofocus': true, text: next.label, onclick: next.run }),
-      el('button', { class: 'btn btn-ghost', type: 'button', text: 'Change mode', onclick: () => transition('mode-select', { owner: 'ui', reason: 'results-change-mode' }) }),
-      el('button', { class: 'btn btn-ghost', type: 'button', text: 'View progress', onclick: () => transition('progression', { owner: 'ui', reason: 'results-progress' }) })));
+      el('button', { class: 'btn btn-ghost', type: 'button', text: () => T('Change mode'), onclick: () => transition('mode-select', { owner: 'ui', reason: 'results-change-mode' }) }),
+      el('button', { class: 'btn btn-ghost', type: 'button', text: () => T('View progress'), onclick: () => transition('progression', { owner: 'ui', reason: 'results-progress' }) })));
 
     s.append(...sections.filter(Boolean));
-    announce(`${headline} Score ${fmtScore(result.score.total)}.`);
+    announce(T('{headline} Score {score}.', { headline, score: fmtScore(result.score.total) }));
   }
 
   function nextAction() {
@@ -1857,7 +1918,7 @@ export function createUI({ root, services }) {
       const idx = journey.findIndex((e) => e.id === levelDef.id);
       const nextEntry = journey[idx + 1];
       if (nextEntry) {
-        return { label: `Next: ${nextEntry.name}`, run: () => startLevel(journeyLevel(nextEntry), { ranked: false, boardKey: null }) };
+        return { label: () => T('Next: {name}', { name: levelName(nextEntry) }), run: () => startLevel(journeyLevel(nextEntry), { ranked: false, boardKey: null }) };
       }
     }
     if (levelDef?.kind === 'challenge') {
@@ -1865,20 +1926,20 @@ export function createUI({ root, services }) {
       const idx = list.findIndex((c) => c.id === levelDef.id);
       const nextC = list[idx + 1];
       if (nextC) {
-        return { label: `Next: ${nextC.name}`, run: () => startLevel(challengeLevel(nextC), { ranked: true, boardKey: nextC.id }) };
+        return { label: () => T('Next: {name}', { name: T(nextC.name) }), run: () => startLevel(challengeLevel(nextC), { ranked: true, boardKey: nextC.id }) };
       }
     }
     if (levelDef?.kind === 'practice') {
-      return { label: 'Fresh practice seed', run: () => {
+      return { label: () => T('Fresh practice seed'), run: () => {
         practiceSeed = freshSeed();
         startLevel(content.practiceLevel(practiceDifficulty, practiceSeed), { ranked: false, boardKey: `practice-${practiceDifficulty}` });
       } };
     }
     const nextStage = nextJourneyStage(prog);
     if (nextStage) {
-      return { label: `Journey: ${nextStage.name}`, run: () => startLevel(journeyLevel(nextStage), { ranked: false, boardKey: null }) };
+      return { label: () => T('Journey: {name}', { name: levelName(nextStage) }), run: () => startLevel(journeyLevel(nextStage), { ranked: false, boardKey: null }) };
     }
-    return { label: 'Practice a fresh shelf', run: () => {
+    return { label: () => T('Practice a fresh shelf'), run: () => {
       practiceSeed = freshSeed();
       startLevel(content.practiceLevel(practiceDifficulty, practiceSeed), { ranked: false, boardKey: null });
     } };
@@ -1912,31 +1973,31 @@ export function createUI({ root, services }) {
 
 
     const ruleCard = (title, vessels, caption) => el('div', { class: 'panel cp-rule-card' },
-      el('h2', { text: title }),
+      el('h2', { text: () => T(title) }),
       el('div', { class: 'cp-mini-board' }, vessels),
-      el('p', { text: caption }));
+      el('p', { text: () => T(caption) }));
 
     s.append(
-      el('h1', { text: 'How to pour' }),
-      el('p', { class: 'screen-lede', text: 'The keys below reflect your current control mappings. Change them in Settings.' }),
+      el('h1', { text: () => T('How to pour') }),
+      el('p', { class: 'screen-lede', text: () => T('The keys below reflect your current control mappings. Change them in Settings.') }),
       el('div', { class: 'cp-rule-grid' },
-        ruleCard('A legal pour', [miniVessel([0, 0]), miniVessel([0]), miniVessel([])],
-          'Liquid pours onto a matching color, or into an empty vessel. The whole contiguous top run moves together.'),
-        ruleCard('Colors must match', [miniVessel([1]), miniVessel([2])],
-          'Emberwine will not settle on Tidewater. A mismatched pour is refused with an explanation.'),
-        ruleCard('Contiguous runs', [miniVessel([3, 1, 1]), miniVessel([1])],
-          'Two touching layers of one color travel as a single pour — deep runs are efficient.'),
-        ruleCard('Full vessels refuse', [miniVessel([2, 2, 2, 2]), miniVessel([2])],
-          'A full vessel accepts nothing. Finished, harmonized vessels may still pour out.')),
-      el('h2', { text: 'Controls' }),
+        ruleCard(N('A legal pour'), [miniVessel([0, 0]), miniVessel([0]), miniVessel([])],
+          N('Liquid pours onto a matching color, or into an empty vessel. The whole contiguous top run moves together.')),
+        ruleCard(N('Colors must match'), [miniVessel([1]), miniVessel([2])],
+          N('Emberwine will not settle on Tidewater. A mismatched pour is refused with an explanation.')),
+        ruleCard(N('Contiguous runs'), [miniVessel([3, 1, 1]), miniVessel([1])],
+          N('Two touching layers of one color travel as a single pour — deep runs are efficient.')),
+        ruleCard(N('Full vessels refuse'), [miniVessel([2, 2, 2, 2]), miniVessel([2])],
+          N('A full vessel accepts nothing. Finished, harmonized vessels may still pour out.'))),
+      el('h2', { text: () => T('Controls') }),
       el('table', { class: 'cp-table' },
         el('tbody', {}, Object.keys(BINDING_LABELS).map((action) => el('tr', {},
-          el('th', { scope: 'row', text: BINDING_LABELS[action] }),
-          el('td', {}, el('kbd', { text: prettyCodes(b[action] || DEFAULT_BINDINGS[action]) })))))),
-      el('p', { class: 'card-dim', text: 'Escape also cancels a selection or pauses. Gamepad: stick or D-pad moves focus, A pours, B cancels, Start pauses, X undoes, Y hints.' }),
+          el('th', { scope: 'row', text: () => bindingLabel(action) }),
+          el('td', {}, el('kbd', { text: () => prettyCodes(b[action] || DEFAULT_BINDINGS[action]) })))))),
+      el('p', { class: 'card-dim', text: () => T('Escape also cancels a selection or pauses. Gamepad: stick or D-pad moves focus, A pours, B cancels, Start pauses, X undoes, Y hints.') }),
       el('div', { class: 'cp-pause-group' },
-        el('button', { class: 'btn btn-primary', type: 'button', text: settings.tutorialDone ? 'Replay the lessons' : 'Start the lessons', onclick: () => openSetup('lesson') }),
-        el('button', { class: 'btn btn-ghost', type: 'button', 'data-autofocus': true, text: 'Back', onclick: () => backFromSubScreen() })));
+        el('button', { class: 'btn btn-primary', type: 'button', text: () => (settings.tutorialDone ? T('Replay the lessons') : T('Start the lessons')), onclick: () => openSetup('lesson') }),
+        el('button', { class: 'btn btn-ghost', type: 'button', 'data-autofocus': true, text: () => T('Back'), onclick: () => backFromSubScreen() })));
   }
 
   function backFromSubScreen() {
@@ -1971,6 +2032,7 @@ export function createUI({ root, services }) {
     const r = resolveGraphics(g, detected);
     const presetName = (p) => GT.preset[p] || p;
     const tierName = (t) => GT.tier[t] || t;
+    // Labels are functions so a language change re-renders them in place (GT is reassigned).
 
     const commit = (next, focusId) => {
       settings.graphics = next;
@@ -1984,9 +2046,9 @@ export function createUI({ root, services }) {
       }
     };
 
-    const presetSelect = el('select', { id: 'gfx-preset', 'data-gfx': 'preset', 'aria-label': GT.quality },
+    const presetSelect = el('select', { id: 'gfx-preset', 'data-gfx': 'preset', 'aria-label': () => GT.quality },
       ['auto', ...GFX_PRESETS].map((p) => {
-        const opt = el('option', { value: p, text: p === 'auto' ? fmt(GT.auto, { tier: presetName(detected) }) : presetName(p) });
+        const opt = el('option', { value: p, text: () => (p === 'auto' ? fmt(GT.auto, { tier: presetName(detected) }) : presetName(p)) });
         if ((g.preset || 'auto') === p) opt.selected = true;
         return opt;
       }));
@@ -1996,17 +2058,17 @@ export function createUI({ root, services }) {
     const scaleValue = el('span', { class: 'cp-slider-value', id: 'gfx-scale-value', text: `${pct}%` });
     const scaleInput = el('input', {
       type: 'range', id: 'gfx-scale', 'data-gfx': 'render_scale', min: '50', max: '200', step: '5',
-      value: String(pct), 'aria-label': GT.renderScale,
+      value: String(pct), 'aria-label': () => GT.renderScale,
     });
     scaleInput.addEventListener('input', () => { scaleValue.textContent = `${scaleInput.value}%`; });
     scaleInput.addEventListener('change', () => commit({ ...settings.graphics, render_scale: Number(scaleInput.value) / 100 }, 'gfx-scale'));
 
     const catFields = Object.entries(GFX_CATEGORIES).map(([cat, tiers]) => {
-      const sel = el('select', { id: `gfx-${cat}`, 'data-gfx': cat, 'aria-label': GT.cat[cat] },
+      const sel = el('select', { id: `gfx-${cat}`, 'data-gfx': cat, 'aria-label': () => GT.cat[cat] },
         ['preset', ...tiers].map((t) => {
           const opt = el('option', {
             value: t,
-            text: t === 'preset' ? fmt(GT.fromPreset, { tier: tierName(presetTier(r.preset, cat)) }) : tierName(t),
+            text: () => (t === 'preset' ? fmt(GT.fromPreset, { tier: tierName(presetTier(r.preset, cat)) }) : tierName(t)),
           });
           if ((tiers.includes(g[cat]) ? g[cat] : 'preset') === t) opt.selected = true;
           return opt;
@@ -2016,14 +2078,14 @@ export function createUI({ root, services }) {
         if (sel.value === 'preset') delete next[cat]; else next[cat] = sel.value;
         commit(next, `gfx-${cat}`);
       });
-      return el('label', { class: 'cp-field' }, el('span', { text: GT.cat[cat] }), sel);
+      return el('label', { class: 'cp-field' }, el('span', { text: () => GT.cat[cat] }), sel);
     });
 
     const check = (id, key, label, value) => {
-      const input = el('input', { type: 'checkbox', id, 'data-gfx': key, 'aria-label': label });
+      const input = el('input', { type: 'checkbox', id, 'data-gfx': key, 'aria-label': () => GT[label] });
       input.checked = value;
       input.addEventListener('change', () => commit({ ...settings.graphics, [key]: input.checked }, id));
-      return el('label', { class: 'cp-field cp-toggle' }, el('span', { text: label }), input);
+      return el('label', { class: 'cp-field cp-toggle' }, el('span', { text: () => GT[label] }), input);
     };
 
     const summary = el('p', { class: 'cp-gfx-summary card-dim', id: 'gfx-summary', 'aria-live': 'polite' });
@@ -2050,12 +2112,12 @@ export function createUI({ root, services }) {
       if (!screens.settings.hidden) refresh();
     }, 1000);
 
-    const sec = section('Graphics',
-      el('label', { class: 'cp-field' }, el('span', { text: GT.quality }), presetSelect),
-      el('label', { class: 'cp-field' }, el('span', { text: GT.renderScale }), scaleInput, scaleValue),
+    const sec = section(N('Graphics'),
+      el('label', { class: 'cp-field' }, el('span', { text: () => GT.quality }), presetSelect),
+      el('label', { class: 'cp-field' }, el('span', { text: () => GT.renderScale }), scaleInput, scaleValue),
       el('div', { class: 'cp-gfx-grid' }, catFields),
-      check('gfx-adaptive', 'adaptive', GT.adaptive, g.adaptive !== false),
-      check('gfx-fps', 'show_fps', GT.showFps, !!g.show_fps),
+      check('gfx-adaptive', 'adaptive', 'adaptive', g.adaptive !== false),
+      check('gfx-fps', 'show_fps', 'showFps', !!g.show_fps),
       summary, note,
       ...extra);
     sec.id = 'gfx-section';
@@ -2066,16 +2128,16 @@ export function createUI({ root, services }) {
   function renderSettings() {
     const s = screens.settings;
     s.textContent = '';
-    s.append(el('h1', { text: 'Settings' }));
+    s.append(el('h1', { text: () => T('Settings') }));
 
     const section = (title, ...children) => el('section', { class: 'panel cp-settings-section' },
-      el('h2', { text: title }), ...children);
+      el('h2', { text: () => T(title) }), ...children);
 
     const slider = (label, key, bus) => {
       const value = el('span', { class: 'cp-slider-value', text: `${Math.round((settings[key] ?? 0) * 100)}%` });
       const input = el('input', {
         type: 'range', min: '0', max: '1', step: '0.05', value: String(settings[key] ?? 0),
-        'aria-label': label,
+        'aria-label': () => T(label),
       });
       input.addEventListener('input', () => {
         settings[key] = Number(input.value);
@@ -2083,11 +2145,11 @@ export function createUI({ root, services }) {
         if (audio) audio.setVolume(bus, settings[key]);
       });
       input.addEventListener('change', () => persistSettings(key));
-      return el('label', { class: 'cp-field' }, el('span', { text: label }), input, value);
+      return el('label', { class: 'cp-field' }, el('span', { text: () => T(label) }), input, value);
     };
 
     const toggle = (label, key, onChange, opts = {}) => {
-      const input = el('input', { type: 'checkbox', 'aria-label': label });
+      const input = el('input', { type: 'checkbox', 'aria-label': () => T(label) });
       input.checked = !!settings[key];
       if (opts.disabled) input.disabled = true;
       input.addEventListener('change', () => {
@@ -2095,29 +2157,29 @@ export function createUI({ root, services }) {
         if (onChange) onChange(input.checked);
       });
       return el('label', { class: `cp-field cp-toggle${opts.disabled ? ' disabled' : ''}` },
-        el('span', { text: label }), input,
-        opts.note ? el('span', { class: 'card-dim', text: opts.note }) : null);
+        el('span', { text: () => T(label) }), input,
+        opts.note ? el('span', { class: 'card-dim', text: () => T(opts.note) }) : null);
     };
 
     // -- Audio --
-    s.append(section('Audio',
-      slider('Music', 'music', 'music'),
-      slider('Effects', 'effects', 'effects'),
-      slider('Ambience', 'ambience', 'ambience'),
-      slider('Voice', 'voice', 'voice')));
+    s.append(section(N('Audio'),
+      slider(N('Music'), 'music', 'music'),
+      slider(N('Effects'), 'effects', 'effects'),
+      slider(N('Ambience'), 'ambience', 'ambience'),
+      slider(N('Voice'), 'voice', 'voice')));
 
     // -- Graphics --
-    const themeSelect = el('select', { 'aria-label': 'Shelf theme' },
+    const themeSelect = el('select', { 'aria-label': () => T('Shelf theme') },
       (content.THEMES || []).map((t) => {
-        const opt = el('option', { value: t.id, text: t.name || t.id });
+        const opt = el('option', { value: t.id, text: () => T(t.name || t.id) });
         if (settings.theme === t.id) opt.selected = true;
         return opt;
       }));
     themeSelect.addEventListener('change', () => setSetting('theme', themeSelect.value));
     s.append(buildGraphicsSection(section,
-      el('label', { class: 'cp-field' }, el('span', { text: 'Shelf theme' }), themeSelect),
-      toggle('Reduced motion', 'reducedMotion'),
-      toggle('Wide camera', 'cameraWide')));
+      el('label', { class: 'cp-field' }, el('span', { text: () => T('Shelf theme') }), themeSelect),
+      toggle(N('Reduced motion'), 'reducedMotion'),
+      toggle(N('Wide camera'), 'cameraWide')));
 
     // -- Controls --
     const bindingsList = el('div', { class: 'cp-bindings' },
@@ -2125,21 +2187,22 @@ export function createUI({ root, services }) {
         const btn = el('button', {
           class: 'btn btn-ghost cp-binding-key', type: 'button',
           text: prettyCodes(settings.bindings[action]),
-          'aria-label': `${BINDING_LABELS[action]}, currently ${prettyCodes(settings.bindings[action])}. Activate to remap.`,
+          'aria-label': () => T('{action}, currently {keys}. Activate to remap.', { action: bindingLabel(action), keys: prettyCodes(settings.bindings[action]) }),
           onclick: () => beginRemap(action, btn),
         });
         return el('div', { class: 'cp-binding-row' },
-          el('span', { text: BINDING_LABELS[action] }), btn);
+          el('span', { text: () => bindingLabel(action) }), btn);
       }));
-    s.append(section('Controls',
+    s.append(section(N('Controls'),
       bindingsList,
-      el('p', { class: 'card-dim', text: 'Choose a control, then press the new key. Signed in to StarHermit, your keys follow you to other devices.' }),
-      el('button', { class: 'btn btn-ghost', type: 'button', text: 'Reset keys to defaults', onclick: () => resetBindings() }),
-      toggle('Left-handed tray', 'leftHanded'),
-      toggle('Hold to confirm selection', 'holdToConfirm')));
+      el('p', { class: 'card-dim', text: () => T('Choose a control, then press the new key. Signed in to StarHermit, your keys follow you to other devices.') }),
+      el('button', { class: 'btn btn-ghost', type: 'button', text: () => T('Reset keys to defaults'), onclick: () => resetBindings() }),
+      toggle(N('Left-handed tray'), 'leftHanded'),
+      toggle(N('Hold to confirm selection'), 'holdToConfirm')));
 
     // -- Accessibility --
-    const paletteRow = el('div', { class: 'cp-palette-picker', role: 'radiogroup', 'aria-label': 'Color palette' },
+    const PALETTE_NAMES = { standard: N('Standard'), deuteranopia: N('Deuteranopia'), protanopia: N('Protanopia'), tritanopia: N('Tritanopia'), contrast: N('Contrast') };
+    const paletteRow = el('div', { class: 'cp-palette-picker', role: 'radiogroup', 'aria-label': () => T('Color palette') },
       Object.keys(content.COLOR_SETS || {}).map((key) => {
         const set = content.COLOR_SETS[key];
         const swatches = el('span', { class: 'cp-swatches', 'aria-hidden': 'true' },
@@ -2153,34 +2216,34 @@ export function createUI({ root, services }) {
             renderSettings();
             showScreen('settings');
           },
-        }, swatches, el('span', { text: key[0].toUpperCase() + key.slice(1) }));
+        }, swatches, el('span', { text: () => (PALETTE_NAMES[key] ? T(PALETTE_NAMES[key]) : key[0].toUpperCase() + key.slice(1)) }));
         return btn;
       }));
-    s.append(section('Accessibility',
-      el('div', { class: 'cp-field' }, el('span', { text: 'Color palette' }), paletteRow),
-      toggle('Labels on liquids', 'labelsOnLiquids', () => { if (session) renderBoard(); }),
-      toggle('Larger text', 'largerText'),
-      toggle('High contrast', 'highContrast'),
-      toggle('Reduced motion', 'reducedMotion'),
-      toggle('Haptics', 'hapticsOff', null, { disabled: true, note: 'This device does not expose haptics to the browser yet.' })));
+    s.append(section(N('Accessibility'),
+      el('div', { class: 'cp-field' }, el('span', { text: () => T('Color palette') }), paletteRow),
+      toggle(N('Labels on liquids'), 'labelsOnLiquids', () => { if (session) renderBoard(); }),
+      toggle(N('Larger text'), 'largerText'),
+      toggle(N('High contrast'), 'highContrast'),
+      toggle(N('Reduced motion'), 'reducedMotion'),
+      toggle(N('Haptics'), 'hapticsOff', null, { disabled: true, note: N('This device does not expose haptics to the browser yet.') })));
 
     // -- Gameplay --
-    s.append(section('Gameplay',
-      toggle('Hints enabled', 'hintsEnabled', () => syncActionStates())));
+    s.append(section(N('Gameplay'),
+      toggle(N('Hints enabled'), 'hintsEnabled', () => syncActionStates())));
 
     // -- Data --
-    const exportBtn = el('button', { class: 'btn btn-ghost', type: 'button', text: 'Export save', onclick: exportSave });
+    const exportBtn = el('button', { class: 'btn btn-ghost', type: 'button', text: () => T('Export save'), onclick: exportSave });
     const importInput = el('input', { type: 'file', accept: 'application/json,.json', class: 'sr-only' });
     importInput.addEventListener('change', () => importSave(importInput.files?.[0], importInput));
-    const importBtn = el('button', { class: 'btn btn-ghost', type: 'button', text: 'Import save', onclick: () => importInput.click() });
-    const resetBtn = el('button', { class: 'btn btn-danger', type: 'button', text: 'Reset all progress', onclick: resetProgress });
-    const consentToggle = toggle('Share anonymous usage events', 'telemetryConsent');
-    s.append(section('Data',
+    const importBtn = el('button', { class: 'btn btn-ghost', type: 'button', text: () => T('Import save'), onclick: () => importInput.click() });
+    const resetBtn = el('button', { class: 'btn btn-danger', type: 'button', text: () => T('Reset all progress'), onclick: resetProgress });
+    const consentToggle = toggle(N('Share anonymous usage events'), 'telemetryConsent');
+    s.append(section(N('Data'),
       consentToggle,
-      el('p', { class: 'card-dim', text: 'With consent on, the game sends only anonymous funnel events — starts, round ends, settings changes, error categories. Never text, never pointers, never identifiers.' }),
+      el('p', { class: 'card-dim', text: () => T('With consent on, the game sends only anonymous funnel events — starts, round ends, settings changes, error categories. Never text, never pointers, never identifiers.') }),
       el('div', { class: 'cp-pause-group' }, exportBtn, importBtn, importInput, resetBtn)));
 
-    s.append(el('button', { class: 'btn btn-ghost', type: 'button', 'data-autofocus': true, text: 'Back', onclick: () => backFromSubScreen() }));
+    s.append(el('button', { class: 'btn btn-ghost', type: 'button', 'data-autofocus': true, text: () => T('Back'), onclick: () => backFromSubScreen() }));
   }
 
   function resetBindings() {
@@ -2189,15 +2252,15 @@ export function createUI({ root, services }) {
     persistSettings('bindings');
     platform.resetControls().catch(() => {});
     renderSettings();
-    announce('Keys reset to defaults.');
+    announce(T('Keys reset to defaults.'));
   }
 
   function beginRemap(action, btn) {
     if (remapCapture) remapCapture.button.classList.remove('capturing');
     remapCapture = { action, button: btn };
     btn.classList.add('capturing');
-    btn.textContent = 'Press a key…';
-    announce(`Remapping ${BINDING_LABELS[action]}. Press the new key, or Escape to cancel.`);
+    btn.textContent = T('Press a key…');
+    announce(T('Remapping {action}. Press the new key, or Escape to cancel.', { action: bindingLabel(action) }));
   }
 
   function exportSave() {
@@ -2214,7 +2277,7 @@ export function createUI({ root, services }) {
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 5000);
-      notify('Save exported — keep the file somewhere safe.');
+      notify(T('Save exported — keep the file somewhere safe.'));
     } catch {
       showError('storage');
     }
@@ -2226,13 +2289,13 @@ export function createUI({ root, services }) {
       const text = await file.text();
       const data = storage.verifyDoc(JSON.parse(text));
       if (!data) {
-        announce('That save file failed its checksum — nothing was imported.', true);
+        announce(T('That save file failed its checksum — nothing was imported.'), true);
         return;
       }
       const ok = await confirmDialog(
-        'Import save?',
-        'This replaces the settings and progress stored on this device. Your current local save will be overwritten.',
-        'Import and replace');
+        N('Import save?'),
+        N('This replaces the settings and progress stored on this device. Your current local save will be overwritten.'),
+        N('Import and replace'));
       if (!ok) return;
       if (data.settings) {
         Object.assign(settings, data.settings);
@@ -2247,18 +2310,18 @@ export function createUI({ root, services }) {
       buildTitleScreen();
       renderSettings();
       showScreen('settings');
-      notify('Save imported. The shelf remembers.');
+      notify(T('Save imported. The shelf remembers.'));
     } catch {
-      announce('That file could not be read as a Chromatic Pour save.', true);
+      announce(T('That file could not be read as a Chromatic Pour save.'), true);
     } finally {
       if (inputEl) inputEl.value = '';
     }
   }
 
   async function resetProgress() {
-    const first = await confirmDialog('Reset all progress?', 'Stars, streaks, achievements and bests on this device will be erased.', 'Erase progress');
+    const first = await confirmDialog(N('Reset all progress?'), N('Stars, streaks, achievements and bests on this device will be erased.'), N('Erase progress'));
     if (!first) return;
-    const second = await confirmDialog('Are you certain?', 'This cannot be undone. Exported saves can restore it later.', 'Yes, erase everything');
+    const second = await confirmDialog(N('Are you certain?'), N('This cannot be undone. Exported saves can restore it later.'), N('Yes, erase everything'));
     if (!second) return;
     storage.saveProgression({
       version: 1, journey: {}, dailies: {}, achievements: {},
@@ -2269,7 +2332,7 @@ export function createUI({ root, services }) {
     settings.tutorialDone = false;
     saveSettings(settings);
     buildTitleScreen();
-    notify('Progress erased. A blank ledger, a clean shelf.');
+    notify(T('Progress erased. A blank ledger, a clean shelf.'));
   }
 
   // -------------------------------------------------------------------------
@@ -2291,46 +2354,46 @@ export function createUI({ root, services }) {
       .sort((a, b) => (b[1].score || 0) - (a[1].score || 0))[0];
 
     s.append(
-      el('h1', { text: 'The ledger of the shelf' }),
+      el('h1', { text: () => T('The ledger of the shelf') }),
       el('div', { class: 'cp-progress-grid' },
         el('div', { class: 'panel' },
-          el('h2', { text: 'Journey' }),
+          el('h2', { text: () => T('Journey') }),
           el('p', { class: 'cp-big-stat', text: `${stars} / ${journey.length * 3} ★` }),
-          el('p', { text: `${beaten} of ${journey.length} stages harmonized.` }),
-          el('p', { class: 'card-dim', text: nextJourneyStage(prog)
-            ? `Next stage: ${nextJourneyStage(prog).name}`
-            : 'Every stage complete. The shelf is yours.' })),
+          el('p', { text: () => T('{n} of {total} stages harmonized.', { n: beaten, total: journey.length }) }),
+          el('p', { class: 'card-dim', text: () => (nextJourneyStage(prog)
+            ? T('Next stage: {name}', { name: levelName(nextJourneyStage(prog)) })
+            : T('Every stage complete. The shelf is yours.')) })),
         el('div', { class: 'panel' },
-          el('h2', { text: 'Mastery track' }),
+          el('h2', { text: () => T('Mastery track') }),
           el('p', { class: 'cp-big-stat', text: `${masteryDone.length} / ${masteryStages.length} ◆` }),
-          el('p', { class: 'card-dim', text: masteryStages.length
-            ? `Mastery stages test combined mechanics. ${masteryList.length ? `${masteryList.length} recorded on the mastery roll.` : 'None recorded yet.'}`
-            : 'Mastery stages appear as the journey grows.' })),
+          el('p', { class: 'card-dim', text: () => (masteryStages.length
+            ? `${T('Mastery stages test combined mechanics.')} ${masteryList.length ? T('{n} recorded on the mastery roll.', { n: masteryList.length }) : T('None recorded yet.')}`
+            : T('Mastery stages appear as the journey grows.')) })),
         el('div', { class: 'panel' },
-          el('h2', { text: 'Achievements' }),
+          el('h2', { text: () => T('Achievements') }),
           el('ul', { class: 'cp-achievements' },
             (storage.ACHIEVEMENTS || []).map((a) => {
               const unlocked = (prog.achievements || {})[a.key];
               return el('li', { class: unlocked ? 'unlocked' : 'locked' },
-                el('strong', { text: a.name }),
-                el('span', { class: 'card-dim', text: unlocked ? ` — ${a.desc} (unlocked)` : ` — ${a.desc}` }));
+                el('strong', { text: () => T(a.name) }),
+                el('span', { class: 'card-dim', text: () => (unlocked ? ` — ${T('{desc} (unlocked)', { desc: T(a.desc) })}` : ` — ${T(a.desc)}`) }));
             }))),
         el('div', { class: 'panel' },
-          el('h2', { text: 'Figures' }),
-          el('p', { text: `${prog.sessionsPlayed || 0} rounds played` }),
-          el('p', { text: `Daily streak: ${prog.streak || 0} day${(prog.streak || 0) === 1 ? '' : 's'}` }),
-          el('p', { text: bestDailyEntry ? `Best daily: ${fmtScore(bestDailyEntry[1].score || 0)} (${bestDailyEntry[0]})` : 'No daily draught poured yet.' }))),
+          el('h2', { text: () => T('Figures') }),
+          el('p', { text: () => T((prog.sessionsPlayed || 0) === 1 ? '{n} round played' : '{n} rounds played', { n: prog.sessionsPlayed || 0 }) }),
+          el('p', { text: () => T((prog.streak || 0) === 1 ? 'Daily streak: {n} day' : 'Daily streak: {n} days', { n: prog.streak || 0 }) }),
+          el('p', { text: () => (bestDailyEntry ? T('Best daily: {score} ({date})', { score: fmtScore(bestDailyEntry[1].score || 0), date: bestDailyEntry[0] }) : T('No daily draught poured yet.')) }))),
       el('div', { class: 'cp-pause-group' },
         el('button', {
           class: 'btn btn-primary', type: 'button', 'data-autofocus': true,
-          text: nextJourneyStage(prog) ? 'Continue the Journey' : 'Practice a shelf',
+          text: () => (nextJourneyStage(prog) ? T('Continue the Journey') : T('Practice a shelf')),
           onclick: () => {
             const next = nextJourneyStage(prog);
             if (next) startLevel(journeyLevel(next), { ranked: false, boardKey: null });
             else openSetup('practice');
           },
         }),
-        el('button', { class: 'btn btn-ghost', type: 'button', text: 'Back to title', onclick: () => { buildTitleScreen(); transition('title', { owner: 'ui', reason: 'progression-back' }); } })));
+        el('button', { class: 'btn btn-ghost', type: 'button', text: () => T('Back to title'), onclick: () => { buildTitleScreen(); transition('title', { owner: 'ui', reason: 'progression-back' }); } })));
   }
 
   // -------------------------------------------------------------------------
@@ -2363,11 +2426,13 @@ export function createUI({ root, services }) {
     hideTutorialCard();
     const step = currentStep();
     if (!step) return;
-    tutorialCard = el('div', { class: 'cp-tutorial-card panel', role: 'dialog', 'aria-label': 'Lesson step' },
-      el('p', { class: 'card-kicker', text: `${tutorial.lesson.title || 'Lesson'} — step ${tutorial.stepIndex + 1} of ${tutorial.lesson.steps.length}` }),
-      el('p', { class: 'cp-tutorial-text', text: step.text || '' }));
+    const lesson = tutorial.lesson;
+    const stepIndex = tutorial.stepIndex;
+    tutorialCard = el('div', { class: 'cp-tutorial-card panel', role: 'dialog', 'aria-label': () => T('Lesson step') },
+      el('p', { class: 'card-kicker', text: () => T('{lesson} — step {n} of {total}', { lesson: T(lesson.title || 'Lesson'), n: stepIndex + 1, total: lesson.steps.length }) }),
+      el('p', { class: 'cp-tutorial-text', text: () => (step.text ? T(step.text) : '') }));
     overlayLayer.append(tutorialCard);
-    announce(step.text || '');
+    announce(step.text ? T(step.text) : '');
   }
 
   function hideTutorialCard() {
@@ -2392,7 +2457,7 @@ export function createUI({ root, services }) {
         handleSelectResult(res);
         if (res.kind === 'selected') advanceTutorial();
       } else {
-        denyTutorial(i, step, 'That is not the vessel the lesson asks for.');
+        denyTutorial(i, step, T('That is not the vessel the lesson asks for.'));
       }
       return;
     }
@@ -2401,19 +2466,19 @@ export function createUI({ root, services }) {
         if (req.from == null || i === req.from) {
           handleSelectResult(session.selectVessel(i));
         } else {
-          denyTutorial(i, step, 'Start with the vessel the lesson names.');
+          denyTutorial(i, step, T('Start with the vessel the lesson names.'));
         }
         return;
       }
       if (i === selected) { handleSelectResult(session.selectVessel(i)); return; }
       if (req.to != null && i !== req.to) {
-        denyTutorial(i, step, 'Pour into the vessel the lesson names.');
+        denyTutorial(i, step, T('Pour into the vessel the lesson names.'));
         return;
       }
       if (req.kind === 'pour-color' && req.color != null) {
         const run = rules.topRun(session.state, selected);
         if (!run || run.color !== req.color) {
-          denyTutorial(i, step, 'The lesson asks for a specific color.');
+          denyTutorial(i, step, T('The lesson asks for a specific color.'));
           return;
         }
       }
@@ -2423,7 +2488,7 @@ export function createUI({ root, services }) {
       return;
     }
     if (req.kind === 'undo' || req.kind === 'restart') {
-      denyTutorial(i, step, `Use the ${req.kind === 'undo' ? 'Undo' : 'Restart'} button for this step.`);
+      denyTutorial(i, step, req.kind === 'undo' ? T('Use the Undo button for this step.') : T('Use the Restart button for this step.'));
       return;
     }
     handleSelectResult(session.selectVessel(i));
@@ -2436,7 +2501,7 @@ export function createUI({ root, services }) {
     if (!step) return true;
     const req = step.require || {};
     if (req.kind === kind) return true;
-    announce('The lesson asks for something else first — follow the instruction card.', true);
+    announce(T('The lesson asks for something else first — follow the instruction card.'), true);
     audio?.play('invalid');
     return false;
   }
@@ -2445,8 +2510,8 @@ export function createUI({ root, services }) {
     audio?.play('invalid');
     showInvalidOnVessel(i, prefix);
     if (step.hintText) {
-      announce(`${prefix} ${step.hintText}`, true);
-      toast(step.hintText, 'hint');
+      announce(`${prefix} ${T(step.hintText)}`, true);
+      toast(T(step.hintText), 'hint');
     }
   }
 
@@ -2478,8 +2543,8 @@ export function createUI({ root, services }) {
     hideTutorialCard();
     settings.tutorialDone = true;
     saveSettings(settings);
-    toast('Lesson complete — the shelf approves.', 'achievement');
-    announce('Lesson complete.');
+    toast(T('Lesson complete — the shelf approves.'), 'achievement');
+    announce(T('Lesson complete.'));
     tutorial = null;
     session = null;
     buildTitleScreen();
@@ -2519,7 +2584,7 @@ export function createUI({ root, services }) {
     if (session && session.selected != null) {
       session.clearSelection();
       audio?.play('deselect');
-      announce('Selection cleared.');
+      announce(T('Selection cleared.'));
       renderBoard();
       const r = getRenderer();
       if (r) { try { r.setSelected(null); r.previewTargets(null); } catch { /* decorative */ } }
@@ -2532,7 +2597,7 @@ export function createUI({ root, services }) {
     playRefs.playfield?.scrollIntoView({ block: 'center', behavior: reducedMotion() ? 'auto' : 'smooth' });
     const r = getRenderer();
     if (r) { try { r.focusVessel(null); } catch { /* decorative */ } }
-    announce('View recentered on the shelf.');
+    announce(T('View recentered on the shelf.'));
   }
 
   document.addEventListener('keydown', (e) => {
@@ -2557,9 +2622,9 @@ export function createUI({ root, services }) {
         codeMap = null;
         persistSettings('bindings');
         platform.setControls(settings.bindings);
-        announce(`${BINDING_LABELS[action]} is now ${prettyCodes([e.code])}.`);
+        announce(T('{action} is now {key}.', { action: bindingLabel(action), key: prettyCodes([e.code]) }));
       } else {
-        announce('Remap cancelled.');
+        announce(T('Remap cancelled.'));
       }
       button.textContent = prettyCodes(settings.bindings[action]);
       return;
@@ -2664,7 +2729,7 @@ export function createUI({ root, services }) {
         updateProfileChip();
         showScreen('title');
         if (name === 'profile-ready' && platform.profile?.displayName) {
-          announce(`Welcome back, ${platform.profile.displayName}.`);
+          announce(T('Welcome back, {name}.', { name: platform.profile.displayName }));
         }
         break;
       case 'mode-select':
@@ -2706,7 +2771,7 @@ export function createUI({ root, services }) {
 
   function announceWhileAway(ms) {
     if (ms < 5000) return;
-    const message = `Welcome back to the shelf — away for ${fmtAway(ms)}. The round clock was paused.`;
+    const message = T('Welcome back to the shelf — away for {time}. The round clock was paused.', { time: fmtAway(ms) });
     toast(message, 'info');
     announce(message);
     if (session && currentState === 'active') updateTimer();
@@ -2722,8 +2787,26 @@ export function createUI({ root, services }) {
   buildTitleScreen();
   if (!isWebGL) {
     // Slim classic-view notice; the game is fully playable without WebGL.
-    setTimeout(() => notify(ERROR_MESSAGES.webgl), 800);
+    setTimeout(() => notify(T(ERROR_MESSAGES.webgl)), 800);
   }
+
+  // Game language changed (Settings → Language, or the account preference
+  // arrived): re-render every visible string in place — no screen rebuild, the
+  // round, timer and renderer are untouched.
+  function onLanguage() {
+    GT = gfxStrings(pickLocale(curLang()));
+    PT = platformStrings(curLang());
+    relocalizeLive();
+    updateProfileChip();
+    dailyCountdownLast = '';
+    tickDailyCountdown();
+    if (session && playRefs.boardEl) {
+      updateHud();
+      updateTimer();
+      if (session.state) renderBoard(session.state);
+    }
+  }
+  document.addEventListener('cp-language', onLanguage);
 
   return {
     tick,

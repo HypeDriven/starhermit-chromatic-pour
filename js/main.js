@@ -130,6 +130,8 @@ async function restoreFromPlatform() {
   } catch { /* local save stays authoritative */ }
 }
 
+const T = (k) => (globalThis.CPI18N ? globalThis.CPI18N.T(k) : k);
+
 function fatalBoot(title, detail) {
   const app = document.getElementById('app');
   app.textContent = '';
@@ -318,7 +320,7 @@ async function boot() {
     storage = await import('./storage.js');
   } catch (err) {
     console.error('[chromatic-pour] storage.js failed to load', err);
-    fatalBoot('The ledger is missing', 'Local storage support could not start. Reload the page; if it persists, this browser may block storage.');
+    fatalBoot(T('The ledger is missing'), T('Local storage support could not start. Reload the page; if it persists, this browser may block storage.'));
     return;
   }
   // Platform handshake — never block boot longer than 3 s.
@@ -385,7 +387,7 @@ async function boot() {
     content = await import('./content.js');
   } catch (err) {
     console.error('[chromatic-pour] content.js failed to load', err);
-    fatalBoot('The level ledger failed to load', 'Game content could not be read. Reload the page to try again.');
+    fatalBoot(T('The level ledger failed to load'), T('Game content could not be read. Reload the page to try again.'));
     return;
   }
 

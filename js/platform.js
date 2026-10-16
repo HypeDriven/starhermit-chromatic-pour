@@ -14,7 +14,7 @@
 // (OWN_API below). Telemetry consent is read through `opts.getConsent` (default:
 // storage.loadSettings().telemetryConsent); only funnel events are allowed.
 
-import { loadBestScore, saveBestScore, loadSettings } from './storage.js';
+import { loadBestScore, saveBestScore, loadSettings, mergeCloudDoc, exportSaveDoc } from './storage.js';
 
 const TIMEOUT_MS = 6000;
 const HEARTBEAT_MIN_MS = 25000;
@@ -327,6 +327,16 @@ export async function initPlatform(opts = {}) {
   if (SH) {
     SH.on('auth', (a) => {
       if (!a.signedIn) { profile = null; platform.profile = null; notifyProfile(); }
+    });
+    // Another device saved since our last load: the SDK refused this write and
+    // blocks further ones until a reload. Reload the cloud copy, merge it with
+    // local progress (storage.mergeProgression keeps the better of both), and
+    // save the merged document.
+    SH.on('saveconflict', () => {
+      SH.loadJSON().then((remote) => {
+        if (remote) mergeCloudDoc(remote);
+        if (!SH.saveConflicted() && isHosted()) { SH.saveJSON(exportSaveDoc()); SH.flushSave(); }
+      }).catch(() => { /* stays blocked; the next load retries */ });
     });
   }
 

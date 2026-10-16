@@ -279,6 +279,8 @@ function journeyStage(i) {
   const def = {
     id,
     name: `${JOURNEY_NAME_A[idx % JOURNEY_NAME_A.length]} ${JOURNEY_NAME_B[Math.floor(idx / JOURNEY_NAME_A.length)]}`,
+    // [proper name, suffix]: the UI shows the suffix translated ("{name} Prelude").
+    nameParts: [JOURNEY_NAME_A[idx % JOURNEY_NAME_A.length], JOURNEY_NAME_B[Math.floor(idx / JOURNEY_NAME_A.length)]],
     kind: 'journey',
     colorCount,
     capacity: 4,
@@ -373,6 +375,7 @@ export function practiceLevel(difficultyId, seed = 'practice') {
   return {
     id: `practice-${difficultyId}-${seed}`,
     name: `${d.label} Practice`,
+    difficulty: difficultyId,
     kind: 'practice',
     seed: String(seed),
     colorCount: d.colorCount,
