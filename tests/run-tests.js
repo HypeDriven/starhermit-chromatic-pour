@@ -3,6 +3,7 @@
 // replay determinism, idempotency, fuzzing, golden sessions, content
 // validation, legalPours/hints.
 
+import '../js/gpu-level.js'; // sets globalThis.StarHermitGpu (as the page's classic script does)
 import * as rules from '../js/rules.js';
 import { GameSession } from '../js/session.js';
 import { createRng } from '../js/rng.js';
@@ -831,16 +832,47 @@ await testAsync('platform: cloud save game:<slug> round-trip, settings KV patch,
 // 14. Graphics quality model (js/gfx.js) + panel strings
 // ---------------------------------------------------------------------------
 
-test('gfx: detectPreset maps GPU strings to presets; touch caps Auto at balanced', () => {
-  eq(gfx.detectPreset('ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero)), SwiftShader driver)'), 'low');
-  eq(gfx.detectPreset('llvmpipe (LLVM 15.0.7, 256 bits)'), 'low');
-  eq(gfx.detectPreset('ANGLE (NVIDIA, NVIDIA GeForce RTX 3070 Direct3D11 vs_5_0 ps_5_0)'), 'high');
-  eq(gfx.detectPreset('Apple M2 Pro'), 'high');
-  eq(gfx.detectPreset('ANGLE (Intel, Intel(R) UHD Graphics 620 Direct3D11)'), 'balanced');
-  eq(gfx.detectPreset('Adreno (TM) 730'), 'balanced');
-  eq(gfx.detectPreset(''), 'balanced');
-  eq(gfx.detectPreset('Apple M2 Pro', true), 'balanced', 'mobile cap');
-  eq(gfx.detectPreset('SwiftShader', true), 'low');
+const DESK = { webgl: true, webgl2: true, cores: 8, memoryGb: 8 };
+const PHONE = { webgl: true, webgl2: true, mobile: true, cores: 8, memoryGb: 8 };
+
+test('gfx: hardware level → preset (Low 0, Balanced 4, High 10, Ultra 17)', () => {
+  eq(gfx.detectPreset('ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)', DESK), 'low');
+  eq(gfx.detectLevel('llvmpipe (LLVM 15.0.7, 256 bits)', DESK), 0);
+  eq(gfx.detectPreset('ANGLE (AMD, AMD Radeon(TM) Graphics Direct3D11 vs_5_0 ps_5_0)', DESK), 'low');
+  eq(gfx.detectPreset('ANGLE (Intel, Intel(R) UHD Graphics 620 Direct3D11)', DESK), 'low');
+  eq(gfx.detectPreset('ANGLE (Intel, Intel(R) Iris(R) Xe Graphics Direct3D11)', DESK), 'balanced');
+  eq(gfx.detectPreset('ANGLE (NVIDIA, NVIDIA GeForce GTX 1070 Direct3D11 vs_5_0 ps_5_0)', DESK), 'high');
+  eq(gfx.detectPreset('ANGLE (NVIDIA, NVIDIA GeForce RTX 4080 Direct3D11 vs_5_0 ps_5_0)', DESK), 'ultra');
+  eq(gfx.detectLevel('ANGLE (NVIDIA, NVIDIA GeForce RTX 5090 Direct3D11 vs_5_0 ps_5_0)', DESK), 20);
+  eq(gfx.detectPreset('ANGLE (NVIDIA, NVIDIA GeForce RTX 5090 Direct3D11 vs_5_0 ps_5_0)', DESK), 'ultra');
+  eq(gfx.presetForLevel(3), 'low');
+  eq(gfx.presetForLevel(16), 'high');
+});
+
+test('gfx: phones and tablets are capped at Balanced; software GPUs stay Low', () => {
+  eq(gfx.detectPreset('Adreno (TM) 740', PHONE), 'balanced');
+  assert(gfx.detectLevel('Adreno (TM) 740', PHONE) <= 9, 'phone level cap');
+  eq(gfx.detectPreset('NVIDIA GeForce RTX 5090', PHONE), 'balanced');
+  eq(gfx.detectPreset('SwiftShader', PHONE), 'low');
+});
+
+test('gfx: every preset has an explicit budget that grows from Low to Ultra and scales with the level', () => {
+  const order = gfx.PRESETS;
+  const keys = ['material', 'woodTexture', 'stoneTexture', 'segments', 'flaskGlass', 'motes', 'particles', 'bloomRes', 'aoRes'];
+  for (const p of order) for (const k of keys) assert(gfx.BUDGETS[p][k] != null, `${p}.${k}`);
+  for (let i = 1; i < order.length; i++) {
+    for (const k of ['woodTexture', 'stoneTexture', 'segments', 'motes', 'particles', 'bloomRes', 'aoRes']) {
+      assert(gfx.BUDGETS[order[i]][k] >= gfx.BUDGETS[order[i - 1]][k], `${order[i]}.${k}`);
+    }
+  }
+  eq(gfx.BUDGETS.low.material, 'lambert');
+  eq(gfx.BUDGETS.ultra.flaskGlass, 'transmission');
+  const u = gfx.resolve({ preset: 'ultra' }, 'low', 0).budget;
+  eq(JSON.stringify(u), JSON.stringify(gfx.resolve({ preset: 'ultra' }, 'ultra', 17).budget), 'manual Ultra on a weak GPU keeps the Ultra floor budget');
+  const b4 = gfx.resolve({ preset: 'balanced' }, 'balanced', 4).budget, b9 = gfx.resolve({ preset: 'balanced' }, 'balanced', 9).budget;
+  assert(b9.particles > b4.particles && b9.motes > b4.motes, 'counts scale up within the preset');
+  assert(gfx.resolve({ preset: 'balanced', particles: 'low' }, 'balanced', 20).budget.particles <= gfx.PARTICLE_CAP.low, 'Particles tier caps');
+  eq(gfx.resolve({ preset: 'low' }, 'low', 0).budget.motes, 0);
 });
 
 test('gfx: resolve uses detected preset for auto, explicit preset otherwise', () => {

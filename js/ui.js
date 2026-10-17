@@ -10,7 +10,7 @@
 
 import {
   PRESETS as GFX_PRESETS, CATEGORIES as GFX_CATEGORIES, resolve as resolveGraphics,
-  presetTier, choosePreset, describe as describeGraphics, pixelRatio as gfxPixelRatio, DEFAULT_GRAPHICS,
+  presetTier, choosePreset, describe as describeGraphics, pixelRatio as gfxPixelRatio, DEFAULT_GRAPHICS, getHardwareLevel,
 } from './gfx.js';
 import { gfxStrings, pickLocale, fmt } from './gfx-strings.js';
 import { platformStrings, fmtPlatform } from './platform-strings.js';
@@ -316,6 +316,7 @@ export function createUI({ root, services }) {
     body.dataset.gfxPreset = gfx.preset;
     body.dataset.gfxDetail = gfx.detail;
     body.dataset.gfxBackground = gfx.background;
+    body.dataset.gfxUiBlur = gfx.budget.uiBlur ? 'on' : 'off';
 
     const theme = activeTheme();
     const style = document.documentElement.style;
@@ -2100,7 +2101,7 @@ export function createUI({ root, services }) {
         text = describeGraphics(r, [Math.round(window.innerWidth * pr), Math.round(window.innerHeight * pr)]);
       }
       const fps = r.showFps && now.fps ? ` · ${now.fps} fps` : '';
-      summary.textContent = `${now.gpu || GT.unknownGpu} · ${text}${fps}`;
+      summary.textContent = `${now.gpu || GT.unknownGpu} · ${fmt(GT.level, { n: getHardwareLevel() })} · ${text}${fps}`;
       if (!isWebGL) { note.textContent = GT.noWebgl; note.hidden = false; }
       else if (now.postFailed) { note.textContent = GT.postFailed; note.hidden = false; }
       else note.hidden = true;

@@ -18,7 +18,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { decorStream } from './rng.js';
 import {
   resolve as resolveGraphics, describe as describeGraphics, pixelRatio as gfxPixelRatio,
-  SHADOW_MAP, PARTICLE_BUDGET, MOTE_COUNT,
+  SHADOW_MAP, PARTICLE_CAP, MOTE_CAP,
 } from './gfx.js';
 
 // ---------------------------------------------------------------------------
@@ -79,8 +79,8 @@ const ANIM = {
   BURST_COUNT: 26,
 };
 
-const PARTICLE_MAX = 500;      // hard pool cap (desktop); tier budget may be lower
-const MOTE_MAX = 60;           // drifting dust motes in the candle light
+const PARTICLE_MAX = PARTICLE_CAP.high; // hard pool cap; the preset budget (gfx.budget.particles) is lower
+const MOTE_MAX = MOTE_CAP.high;         // drifting dust motes in the candle light (gfx.budget.motes)
 const ADAPT = { FRAMES: 90, SLOW_MS: 26, FAST_MS: 14, DOWN: 0.1, UP: 0.05, MIN: 0.6 };
 
 // Colour grade + vignette, applied after OutputPass (display-space in and out).
@@ -113,6 +113,15 @@ const MAX_DT_MS = 100;
 // ---------------------------------------------------------------------------
 
 function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+
+// Run a post pass at a fraction of the frame (per-preset budget). EffectComposer sizes every pass to the
+// full frame in addPass/setSize, so the pass's own setSize is wrapped to apply the scale.
+function atScale(pass, k) {
+  if (!(k > 0 && k < 1)) return pass;
+  const setSize = pass.setSize.bind(pass);
+  pass.setSize = (w, h) => setSize(Math.max(1, Math.round(w * k)), Math.max(1, Math.round(h * k)));
+  return pass;
+}
 function easeInOutCubic(k) { return k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2; }
 function easeOutCubic(k) { return 1 - Math.pow(1 - k, 3); }
 
@@ -157,10 +166,12 @@ function makeWallTexture(bgHex) {
   return tex;
 }
 
-function makeWoodTexture(rng) {
+// size: per-preset texture variant (budget.woodTexture); drawn in 256-unit space and scaled.
+function makeWoodTexture(rng, size = 256) {
   const cv = document.createElement('canvas');
-  cv.width = 256; cv.height = 256;
+  cv.width = size; cv.height = size;
   const g = cv.getContext('2d');
+  g.scale(size / 256, size / 256);
   g.fillStyle = '#9a7a56';
   g.fillRect(0, 0, 256, 256);
   // horizontal grain streaks, seeded
@@ -225,14 +236,17 @@ function makeDotTexture() {
 
 // Detailed wall: laid stone blocks with mortar, plaster wash and speckle,
 // plus a matching greyscale bump map (both seeded).
-function makeStoneTextures(bgHex, rng) {
-  const W = 512, H = 256;
+// size: per-preset texture variant (budget.stoneTexture, the width); drawn in 512×256 units and scaled.
+function makeStoneTextures(bgHex, rng, size = 512) {
+  const W = 512, H = 256, k = size / W;
   const cv = document.createElement('canvas');
-  cv.width = W; cv.height = H;
+  cv.width = size; cv.height = Math.round(H * k);
   const g = cv.getContext('2d');
+  g.scale(k, k);
   const bump = document.createElement('canvas');
-  bump.width = W; bump.height = H;
+  bump.width = cv.width; bump.height = cv.height;
   const b = bump.getContext('2d');
+  b.scale(k, k);
   g.fillStyle = shade(bgHex, -0.55);
   g.fillRect(0, 0, W, H);
   b.fillStyle = '#202020';
@@ -275,7 +289,7 @@ function makeStoneTextures(bgHex, rng) {
   for (const t of [map, bumpTex]) {
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
     t.repeat.set(6, 3);
-    t.anisotropy = 4;
+    t.anisotropy = size > 512 ? 8 : 4;
   }
   return { map, bump: bumpTex };
 }
@@ -460,6 +474,25 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
   const raycaster = new THREE.Raycaster();
   const pointerNdc = new THREE.Vector2();
 
+  // Lit environment material for the preset budget: Lambert on Low, Standard on Balanced, Physical (where
+  // `physical`, e.g. sheen wax) on High/Ultra. The params are kept so a preset change can swap the class.
+  function lit(params, physical) {
+    const kind = gfx.budget.material;
+    let m;
+    if (kind === 'lambert') {
+      const { roughness, metalness, sheen, sheenColor, ...lp } = params;
+      m = new THREE.MeshLambertMaterial(lp);
+    } else if (physical && kind === 'physical') m = new THREE.MeshPhysicalMaterial(params);
+    else {
+      const { sheen, sheenColor, ...sp } = params;
+      m = new THREE.MeshStandardMaterial(sp);
+    }
+    m.userData.lit = { params, physical };
+    return m;
+  }
+  // Round-prop LOD: segment count scaled by the preset budget (min 6).
+  const seg = (n) => Math.max(6, Math.round(n * gfx.budget.segments));
+
   // ---- lighting -------------------------------------------------------------
   // Hemisphere fill (warm sky / dark wood bounce), a shadow-casting key light
   // whose frustum is fitted to the two shelves and the wall behind them, and a
@@ -492,15 +525,15 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
 
   let wallTex = makeWallTexture(themeObj.bg);
   let stoneTex = null; // built lazily for the 'detailed' tier
-  const wallMat = new THREE.MeshStandardMaterial({ map: wallTex, roughness: 0.95, metalness: 0 });
+  let wallMat = lit({ map: wallTex, roughness: 0.95, metalness: 0 });
   wallMat.userData.envI = 0.04;
   const wall = new THREE.Mesh(new THREE.PlaneGeometry(34, 18), wallMat);
   wall.position.set(0, 4.5, -4.5);
   wall.receiveShadow = true;
   envGroup.add(wall);
 
-  const woodTex = makeWoodTexture(rng.fork('wood'));
-  const shelfMat = new THREE.MeshStandardMaterial({
+  let woodTex = makeWoodTexture(rng.fork('wood'), gfx.budget.woodTexture);
+  let shelfMat = lit({
     map: woodTex, color: themeObj.shelf, roughness: 0.8, metalness: 0.05,
   });
   shelfMat.userData.envI = 0.3;
@@ -516,7 +549,7 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
   envGroup.add(shelfLow);
 
   // 'detailed' tier: brass edge trim and corbels under both shelves.
-  const brassMat = new THREE.MeshStandardMaterial({ color: 0xb08038, metalness: 1, roughness: 0.38 });
+  let brassMat = lit({ color: 0xb08038, metalness: 1, roughness: 0.38 });
   brassMat.userData.envI = 0.6;
   const detailGroup = new THREE.Group();
   envGroup.add(detailGroup);
@@ -537,10 +570,34 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
     }
   }
 
+  // Swap the shelf/wall/brass materials to the current budget class, keeping their live state.
+  function swapLitMaterials() {
+    const swapped = new Map();
+    envGroup.traverse((o) => {
+      if (!o.material || Array.isArray(o.material) || !o.material.userData.lit) return;
+      const old = o.material;
+      let m = swapped.get(old);
+      if (!m) {
+        m = lit(old.userData.lit.params, old.userData.lit.physical);
+        m.userData = { ...old.userData };
+        m.color.copy(old.color);
+        m.map = old.map;
+        m.bumpMap = old.bumpMap;
+        m.bumpScale = old.bumpScale;
+        swapped.set(old, m);
+      }
+      o.material = m;
+    });
+    wallMat = swapped.get(wallMat) || wallMat;
+    shelfMat = swapped.get(shelfMat) || shelfMat;
+    brassMat = swapped.get(brassMat) || brassMat;
+    for (const old of swapped.keys()) old.dispose();
+  }
+
   function applyDetail(on) {
     detailGroup.visible = on;
     if (on) {
-      if (!stoneTex) stoneTex = makeStoneTextures(themeObj.bg, rng.fork('stone'));
+      if (!stoneTex) stoneTex = makeStoneTextures(themeObj.bg, rng.fork('stone'), gfx.budget.stoneTexture);
       wallMat.map = stoneTex.map;
       wallMat.bumpMap = stoneTex.bump;
       wallMat.bumpScale = 2.2;
@@ -577,11 +634,27 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
   const flaskLiquids = [];
   const dotTex = makeDotTexture();
 
+  // Flasks sit in the 'detailed' group (hidden on Plain); rebuilt with the rest of the decor.
+  const flaskGroup = new THREE.Group();
+  detailGroup.add(flaskGroup);
+
+  // (Re)build the decor for the current budget (material class, round-prop LOD, flask glass).
   function buildDecor() {
+    for (const grp of [decorGroup, flaskGroup]) {
+      grp.traverse((o) => {
+        if (o.geometry) o.geometry.dispose();
+        if (o.material && o.material !== brassMat) o.material.dispose();
+      });
+      grp.clear();
+    }
+    orbBase.length = 0;
+    flaskLiquids.length = 0;
+    orbsPlaced = false;
+    const warm = themeObj.ambience !== 'cool';
     // stacked books (instanced)
     const bookRng = rng.fork('books');
     const bookGeo = new THREE.BoxGeometry(0.55, 0.12, 0.4);
-    const bookMat = new THREE.MeshStandardMaterial({ roughness: 0.85, metalness: 0 });
+    const bookMat = lit({ roughness: 0.85, metalness: 0 });
     const books = new THREE.InstancedMesh(bookGeo, bookMat, 9);
     const col = new THREE.Color();
     let bi = 0;
@@ -608,15 +681,15 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
     const candleRng = rng.fork('candle');
     flamePhase = candleRng.next() * 100;
     const candle = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.09, 0.115, 0.5, 14),
-      new THREE.MeshPhysicalMaterial({
+      new THREE.CylinderGeometry(0.09, 0.115, 0.5, seg(14)),
+      lit({
         color: 0xf2e6c8, roughness: 0.55, sheen: 0.6, sheenColor: new THREE.Color(0xffd8a0),
         emissive: 0xff9a40, emissiveIntensity: 0.05,
-      }));
+      }, true));
     candle.position.set(4.5, 0.25, -0.75);
     candle.castShadow = true;
     decorGroup.add(candle);
-    const dish = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.15, 0.04, 20), brassMat);
+    const dish = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.15, 0.04, seg(20)), brassMat);
     dish.position.set(4.5, 0.02, -0.75);
     dish.castShadow = true;
     dish.receiveShadow = true;
@@ -641,8 +714,8 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
 
     // scroll tubes on the lower shelf
     const scrollRng = rng.fork('scrolls');
-    const scrollMat = new THREE.MeshStandardMaterial({ color: 0xd9c49a, roughness: 0.9 });
-    const scrollGeo = new THREE.CylinderGeometry(0.07, 0.07, 0.9, 12);
+    const scrollMat = lit({ color: 0xd9c49a, roughness: 0.9 });
+    const scrollGeo = new THREE.CylinderGeometry(0.07, 0.07, 0.9, seg(12));
     for (let i = 0; i < 3; i++) {
       const sc = new THREE.Mesh(scrollGeo, scrollMat);
       sc.castShadow = true;
@@ -655,8 +728,8 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
 
     // potted sprig (lower shelf, left)
     const pot = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.16, 0.12, 0.22, 12),
-      new THREE.MeshStandardMaterial({ color: 0xa85f3c, roughness: 0.85 }));
+      new THREE.CylinderGeometry(0.16, 0.12, 0.22, seg(12)),
+      lit({ color: 0xa85f3c, roughness: 0.85 }));
     pot.position.set(-2.2, -2.26 + 0.11, -0.35);
     pot.castShadow = true;
     decorGroup.add(pot);
@@ -664,11 +737,16 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
     // two stoppered specimen flasks on the lower shelf: clear glass that
     // catches the room reflections, with a faintly glowing draught inside
     const flaskRng = rng.fork('flasks');
-    const flaskGlass = new THREE.MeshPhysicalMaterial({
-      color: 0xffffff, roughness: 0.05, metalness: 0, transmission: 0.9, thickness: 0.2, ior: 1.45,
-      transparent: true, opacity: 0.55, clearcoat: 1, clearcoatRoughness: 0.05,
-      side: THREE.DoubleSide, depthWrite: false,
-    });
+    // Refracting glass needs three's transmission pass; Low/Balanced use clear alpha glass instead.
+    const flaskGlass = gfx.budget.flaskGlass === 'transmission'
+      ? new THREE.MeshPhysicalMaterial({
+        color: 0xffffff, roughness: 0.05, metalness: 0, transmission: 0.9, thickness: 0.2, ior: 1.45,
+        transparent: true, opacity: 0.55, clearcoat: 1, clearcoatRoughness: 0.05,
+        side: THREE.DoubleSide, depthWrite: false,
+      })
+      : (gfx.budget.material === 'lambert'
+        ? new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false })
+        : new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.05, metalness: 0, transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false }));
     flaskGlass.userData.envI = 0.9;
     const flaskPts = [];
     for (let i = 0; i <= 10; i++) {
@@ -676,12 +754,12 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
       flaskPts.push(new THREE.Vector2(Math.max(0.001, 0.26 * Math.cos(a)), 0.26 + 0.26 * Math.sin(a)));
     }
     flaskPts.push(new THREE.Vector2(0.07, 0.62), new THREE.Vector2(0.07, 0.78), new THREE.Vector2(0.085, 0.8));
-    const flaskGeo = new THREE.LatheGeometry(flaskPts, 24);
-    const draughtGeo = new THREE.SphereGeometry(0.23, 20, 12, 0, Math.PI * 2, Math.PI * 0.42, Math.PI * 0.58);
-    const corkMat = new THREE.MeshStandardMaterial({ color: 0x8a6440, roughness: 0.95 });
+    const flaskGeo = new THREE.LatheGeometry(flaskPts, seg(24));
+    const draughtGeo = new THREE.SphereGeometry(0.23, seg(20), seg(12), 0, Math.PI * 2, Math.PI * 0.42, Math.PI * 0.58);
+    const corkMat = lit({ color: 0x8a6440, roughness: 0.95 });
     for (const [x, z] of [[-3.7, -0.2], [3.2, -0.45]]) {
       const hue = flaskRng.next();
-      const liquid = new THREE.MeshStandardMaterial({
+      const liquid = lit({
         color: new THREE.Color().setHSL(hue, 0.7, 0.45), emissive: new THREE.Color().setHSL(hue, 0.8, 0.4),
         emissiveIntensity: 0.6, roughness: 0.2,
       });
@@ -690,15 +768,15 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
       draught.position.y = 0.26;
       const glassM = new THREE.Mesh(flaskGeo, flaskGlass);
       glassM.castShadow = true;
-      const cork = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.06, 0.1, 12), corkMat);
+      const cork = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.06, 0.1, seg(12)), corkMat);
       cork.position.y = 0.82;
       flask.add(draught, glassM, cork);
       flask.position.set(x, -2.26, z);
       flask.scale.setScalar(0.9 + flaskRng.next() * 0.3);
-      detailGroup.add(flask);
+      flaskGroup.add(flask);
       flaskLiquids.push(liquid);
     }
-    const leafMat = new THREE.MeshStandardMaterial({ color: 0x4d7a3a, roughness: 0.7 });
+    const leafMat = lit({ color: 0x4d7a3a, roughness: 0.7 });
     const leafGeo = new THREE.ConeGeometry(0.05, 0.42, 6);
     for (let i = 0; i < 3; i++) {
       const leaf = new THREE.Mesh(leafGeo, leafMat);
@@ -710,8 +788,8 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
     // hanging orbs (instanced, gentle seeded bob)
     const orbRng = rng.fork('orbs');
     orbMesh = new THREE.InstancedMesh(
-      new THREE.SphereGeometry(0.09, 12, 10),
-      new THREE.MeshStandardMaterial({ color: 0x2a2438, emissive: themeObj.accent, emissiveIntensity: 2.4, roughness: 0.4 }),
+      new THREE.SphereGeometry(0.09, seg(12), seg(10)),
+      lit({ color: 0x2a2438, emissive: themeObj.accent, emissiveIntensity: 2.4, roughness: 0.4 }),
       6);
     for (let i = 0; i < 6; i++) {
       orbBase.push({
@@ -780,7 +858,7 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
   scene.add(points);
   let pCursor = 0;
   let pAlive = 0;
-  let pBudget = PARTICLE_BUDGET[gfx.particles];
+  let pBudget = gfx.budget.particles;
   const tmpColor = new THREE.Color();
 
   function spawnParticle(x, y, z, vx, vy, vz, lifeMs, colorHex, grav) {
@@ -1496,6 +1574,7 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
   }
 
   function setGraphics(saved, detected = detectedPreset) {
+    const prevBudget0 = gfx.budget;
     detectedPreset = detected || detectedPreset;
     gfx = resolveGraphics(saved, detectedPreset);
     const size = SHADOW_MAP[gfx.shadows];
@@ -1505,9 +1584,22 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
       keyLight.shadow.mapSize.set(size, size);
       if (keyLight.shadow.map) { keyLight.shadow.map.dispose(); keyLight.shadow.map = null; }
     }
-    pBudget = PARTICLE_BUDGET[gfx.particles];
-    moteGeo.setDrawRange(0, MOTE_COUNT[gfx.particles]);
-    motes.visible = MOTE_COUNT[gfx.particles] > 0;
+    pBudget = gfx.budget.particles;
+    moteGeo.setDrawRange(0, gfx.budget.motes);
+    motes.visible = gfx.budget.motes > 0;
+    // Preset asset variants: material class (swapped in place), textures, round-prop LOD and flask glass.
+    let prevBudget = prevBudget0;
+    const nb = gfx.budget;
+    if (nb.material !== prevBudget.material) swapLitMaterials();
+    if (nb.woodTexture !== prevBudget.woodTexture) {
+      const old = woodTex;
+      woodTex = makeWoodTexture(rng.fork('wood'), nb.woodTexture);
+      shelfMat.map = woodTex;
+      old.dispose();
+    }
+    if (nb.stoneTexture !== prevBudget.stoneTexture && stoneTex) { stoneTex.map.dispose(); stoneTex.bump.dispose(); stoneTex = null; }
+    if (nb.segments !== prevBudget.segments || nb.material !== prevBudget.material || nb.flaskGlass !== prevBudget.flaskGlass) buildDecor();
+    prevBudget = nb;
     for (const v of vesselViews) {
       v.glass.material = gfx.detail === 'detailed' ? glassPhysMat : glassPhongMat;
       for (const lm of v.layerMeshes) lm.castShadow = size > 0;
@@ -1556,7 +1648,7 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
       c.setSize(w, h);
       c.addPass(new RenderPass(scene, camera));
       if (gfx.ao !== 'off') {
-        const ao = new GTAOPass(scene, camera, w * pr, h * pr);
+        const ao = atScale(new GTAOPass(scene, camera, w * pr, h * pr), gfx.budget.aoRes);
         ao.output = GTAOPass.OUTPUT.Default;
         ao.blendIntensity = 0.75;
         const hi = gfx.ao === 'high';
@@ -1566,7 +1658,7 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
       }
       if (gfx.bloom === 'on') {
         // High threshold: only the flame, orbs and glowing draughts bloom.
-        c.addPass(new UnrealBloomPass(new THREE.Vector2(w, h), 0.6, 0.45, 0.9));
+        c.addPass(atScale(new UnrealBloomPass(new THREE.Vector2(w, h), 0.6, 0.45, 0.9), gfx.budget.bloomRes));
       }
       c.addPass(new OutputPass());
       if (gfx.grade === 'on') {
@@ -1611,7 +1703,8 @@ export async function createRenderer({ canvas, container, theme, paletteColors, 
     const w = Math.max(1, Math.round(canvas.clientWidth || (container && container.clientWidth) || cssW));
     const h = Math.max(1, Math.round(canvas.clientHeight || (container && container.clientHeight) || cssH));
     // × UIScale: the canvas sits inside the zoomed #app, so its backing store grows with the zoom.
-    const ratio = gfxPixelRatio(gfx, dprRaw, adaptiveScale) * ((window.UIScale && window.UIScale.value) || 1);
+    // The preset budget caps the final ratio (maxRatio), so a large UI zoom can't multiply the pixel count.
+    const ratio = Math.min(gfx.budget.maxRatio, gfxPixelRatio(gfx, dprRaw, adaptiveScale) * ((window.UIScale && window.UIScale.value) || 1));
     if (!force && w === cssW && h === cssH && ratio === pixelRatioNow) return;
     const sizeChanged = w !== cssW || h !== cssH;
     cssW = w; cssH = h;

@@ -970,6 +970,11 @@ body.labels-on .layer-label { display: block; }
   .cp-tagline { margin-bottom: 0.75rem; }
 }
 
+/* Graphics budget (js/gfx.js BUDGETS.uiBlur): Low and Balanced skip the panels' backdrop blur — each
+   blurred panel is an extra full-surface GPU pass over the 3D shelf — and use near-opaque panels instead. */
+body[data-gfx-ui-blur="off"] { --panel: rgba(33, 26, 20, 0.92); }
+body[data-gfx-ui-blur="off"] * { backdrop-filter: none !important; }
+
 /* ------------------------------------------------------------------ */
 /* Accessibility modes                                                 */
 /* ------------------------------------------------------------------ */

@@ -280,6 +280,7 @@ async function runPass(browser, vpName, contextOpts) {
       const bloomDefault = await page.locator('#gfx-bloom option[value="preset"]').textContent();
       if (!/From preset \(On\)/.test(bloomDefault)) throw new Error(`bloom preset label: "${bloomDefault}"`);
       if (!/1024² shadows/.test(await page.locator('#gfx-summary').textContent())) throw new Error('summary does not show High shadows');
+      if (!/ · Level 0 · /.test(await page.locator('#gfx-summary').textContent())) throw new Error('summary lacks the hardware level');
       await page.locator('#gfx-detail').selectOption('plain');
       await page.waitForFunction(() => document.body.dataset.gfxDetail === 'plain');
       await page.locator('#gfx-fps').check();

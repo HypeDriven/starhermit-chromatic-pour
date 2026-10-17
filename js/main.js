@@ -7,7 +7,7 @@
 import * as rules from './rules.js';
 import { GameSession } from './session.js';
 import { createUI } from './ui.js';
-import { detectPreset, migrateQuality, DEFAULT_GRAPHICS } from './gfx.js';
+import { detectLevel, presetForLevel, setHardwareLevel, getHardwareLevel, migrateQuality, DEFAULT_GRAPHICS } from './gfx.js';
 
 // ---------------------------------------------------------------------------
 // App state machine
@@ -366,7 +366,10 @@ async function boot() {
     const probe = renderMod.probeGpu();
     webgl = probe.available;
     gpuName = probe.gpu;
-    detectedPreset = detectPreset(gpuName, isTouchDevice());
+    // StarHermit hardware level → Auto preset (SwiftShader = level 0 → Low; phones cap at Balanced).
+    const system = window.StarHermitGpu ? window.StarHermitGpu.detectSystem() : { mobile: isTouchDevice() };
+    setHardwareLevel(detectLevel(gpuName, system));
+    detectedPreset = presetForLevel(getHardwareLevel());
   } catch (err) {
     console.warn('[chromatic-pour] render.js unavailable, classic view', err);
     renderMod = null;
