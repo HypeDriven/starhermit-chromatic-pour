@@ -196,10 +196,11 @@ The HUD blur matters most: every `backdrop-filter` panel is an extra full-surfac
 
 Phones and tablets pace Auto FPS at half the display refresh rate ("Auto (half refresh rate)") and start at 16 simultaneous sounds (shared `game-options.js`).
 
-**Benchmark** (`node tools/gfx-bench.mjs chromatic-pour`; hook `tests/gfx-bench.mjs` picks the preset in Settings → Graphics, starts Journey stage 1 and keeps pouring through the vessel buttons, replaying from the results screen). Measured 2026-10-17 (AMD Radeon iGPU level 2 GPU time, minus an empty-canvas floor, projected to the preset's floor level; RTX 5090 CPU time):
+**Benchmark** (`node tools/gfx-bench.mjs chromatic-pour`; hook `tests/gfx-bench.mjs` picks the preset in Settings → Graphics, starts Journey stage 1 and keeps pouring through the vessel buttons, replaying from the results screen). Measured 2026-10-17 (AMD Radeon iGPU level 2 GPU time, minus the same-page floor, projected to the preset's floor level; RTX 5090 CPU time):
 
-- Desktop 1920×1080: PASS low (typical 4.32 / slow 5.59 ms at level 0, CPU 1.10 ms); PASS balanced (6.51 / 7.69 ms at level 4, CPU 1.80 ms); PASS high (4.90 / 6.77 ms at level 10, CPU 2.70 ms); PASS ultra (2.65 / 3.10 ms at level 17, CPU 2.60 ms).
-- Mobile 390×844 @3×: PASS low (10.01 / 9.49 ms at level 0, CPU 0.90 ms); PASS balanced (5.91 / 3.57 ms at level 4, CPU 1.40 ms).
+- Desktop 1920×1080: PASS low (typical 2.14 / slow 2.05 ms at level 0, CPU 0.80 ms); PASS balanced (3.24 / 0.00 ms at level 4, CPU 1.30 ms); PASS high (0.00 / 0.26 ms at level 10, CPU 1.60 ms); PASS ultra (1.39 / 1.53 ms at level 17, CPU 1.80 ms).
+- Mobile 390×844 @3×: PASS low (4.20 / 1.01 ms at level 0, CPU 0.60 ms); PASS balanced (1.11 / 0.26 ms at level 4, CPU 1.10 ms).
+- (The floor is the same page and preset with every WebGL draw skipped, measured around each run.)
 
 **Visual assets the design calls for:** title key art (shelf of banded vials over coals), a "harmonized" results illustration (uniform vessels with rising motes), an "unfinished" results illustration (jumbled vessels, hourglass, cooled coals), and a 16:9 cover reusing the key art. All four are shipped (§15).
 
