@@ -1,56 +1,61 @@
 # Chromatic Pour
 
-An alchemist's liquid-sorting puzzle for the browser: pour colored liquids
-between vessels until every vessel holds a single uniform color. Fully
-deterministic rules engine, seeded daily boards, score-chase leaderboards.
+An alchemist's liquid-sorting puzzle: pour colored liquids between vessels
+until every vessel holds a single uniform color. Fully deterministic rules
+engine, seeded daily boards, score-chase leaderboards.
+
+It is a StarHermit engine script game (engine 1.15.1): TypeScript in
+`native/` on the runtime's host API, played natively by the StarHermit client
+and in browsers through the engine's web runtime, which `index.html` (the
+loader `npm run package` writes) pins on wiki.starhermit.com. The hand-written
+browser client was removed; it can be recovered from history.
 
 ## Run
 
 ```
-node server.js        # then open http://localhost:8080 (PORT env to change)
+starhermit .                 # the runtime, from a StarHermit engine release
+npm run package              # after every change: rewrites index.html + starhermit-files.json
 ```
 
-Any static file server works too — or just open `index.html` directly.
-The server additionally hosts the authoritative API (score verification,
-leaderboards, achievements) under `/api/v1/`.
+`STARHERMIT` names the runtime for the npm scripts (default: the published
+Linux runtime under `~/sh/runtime`). `node server.js` is a local dev server
+with its own score API, probed by `npm run test:server`; the game does not
+call it.
 
 ## Controls
 
-- **Pointer**: tap/click a vessel to lift it, tap a target to pour.
-- **Keyboard**: Arrows/WASD move focus, Enter/Space select+confirm, Esc
-  pause/cancel, U undo, H hint, R restart, C camera reset.
-- **Gamepad**: dpad/left stick focus, A confirm, B cancel, Start pause,
-  X undo, Y hint.
+- **Pointer / touch**: tap or click a vessel to lift it, tap a target to pour.
+- **Keyboard**: Arrows/WASD move focus, Enter/Space select and pour, Esc
+  cancel/pause, P pause, U undo, H hint, R restart, C recenter.
+- **Gamepad**: D-pad/left stick focus, A pour, B cancel, Start pause,
+  X undo, Y hint, Select restart.
+
+All are rebindable in the runtime's Options (F1).
 
 ## Modes
 
-Journey (40+ handcrafted levels with mastery gates), Daily (seeded board per
-date, global leaderboard), Challenges (move/time limits), Practice (four
-difficulties), and a guided tutorial.
+Journey (40 stages with mastery gates), Daily (one seeded board per UTC day,
+global leaderboard), Challenges (move/time limits), Practice (four
+difficulties), Score chase, and five guided lessons.
 
 ## Tests
 
 ```
-npm test
+npm test              # rules, i18n, migration, then the engine checks and play scripts
+npm run test:browser  # the packaged loader in headless Chrome (desktop, phone, landscape)
 ```
 
 ## Architecture
 
-- `js/rng.js` — seeded deterministic RNG streams (rules/decor/audio).
-- `js/rules.js` — pure rules engine: game creation, pours, solver, scoring,
-  state hashing. Runs in browser and Node.
-- `js/content.js` — level/theme/palette data, daily level derivation.
-- `js/session.js` — session clock, undo, command log, replay envelopes.
-- `js/storage.js` — localStorage persistence (settings, progression, bests).
-- `js/render.js` — Three.js 3D vessel rendering and pour animations.
-- `js/audio.js` — fully procedural WebAudio (no assets).
-- `js/ui.js` / `js/main.js` — DOM screens, input, accessibility, boot/loop.
-- `js/platform.js` — host-shell integration: server time, scores, telemetry.
-- `server.js` — zero-dependency Node static server + authoritative API;
-  re-simulates replay envelopes through `js/rules.js` to verify scores.
+- `js/rng.js`, `js/rules.js`, `js/content.js`, `js/session.js`,
+  `js/storage.js` — the deterministic rules, content, session and store,
+  shared by the client, the tests and `server.js`.
+- `js/migrate.js` — the engine save document and what carries over from the
+  browser build's cloud save and settings.
+- `native/` — the engine client: state machine and input (`main.ts`),
+  screens (`screens.ts`, `style.ts`), the vessel board (`board.ts`,
+  `shapes.ts`), the 3D shelf (`render.ts`, `quality.ts`), sound
+  (`audio.ts`), platform and saves (`platform.ts`), strings (`i18n.ts`).
+- `score-script.js` — the platform script that posts ranked totals.
 
-## Offline
-
-Three.js is vendored at `vendor/three.module.js`; there are no CDN or network
-dependencies. The game is fully playable offline — platform calls degrade
-gracefully and leaderboards fall back to local bests.
+See `spec.md` for the full running specification.

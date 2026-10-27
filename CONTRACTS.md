@@ -1,13 +1,13 @@
 # Chromatic Pour — Module Contracts
 
 This file is the binding integration contract between modules. Every module is a
-plain ES module (`"type":"module"`), usable in the browser; `rules.js`,
+plain ES module (`"type":"module"`), usable by the engine client; `rules.js`,
 `rng.js`, `content.js`, `storage.js` and `session.js` must also run under
 Node.js (no DOM, no `window`, no `localStorage` access at import time —
 `storage.js` may touch `localStorage` only inside functions, guarded).
 
-Three.js is vendored at `vendor/three.module.js` and mapped via import map as
-`three`. Only `render.js` imports it.
+The 3D shelf is `native/render.ts` on the engine's `starhermit:scene`; no
+`js/` module draws.
 
 ## Color encoding
 
@@ -145,7 +145,7 @@ export class GameSession {
 }
 ```
 
-## js/storage.js  (browser localStorage; functions guarded, Node falls back to memory)
+## js/storage.js  (`localStorage`: the engine's shim, or memory under Node; functions guarded)
 
 ```js
 export const SETTINGS_DEFAULTS = {
@@ -173,95 +173,18 @@ clearLocalProgress()         // erases local bests + archived replays (progress 
 checksumDoc(obj) -> {version, checksum, data} ; verifyDoc(doc) -> data|null
 ```
 
-## js/audio.js  (browser only; WebAudio, fully procedural, no assets)
+## native/ — the engine client (StarHermit host API)
 
-```js
-export function createAudio(settings, {audioSeed}={}) -> audio
-audio = {
-  unlock(),                    // call on first gesture
-  setVolume(bus, v),           // bus: 'music'|'effects'|'ambience'|'voice'
-  play(name, {pitch}={}),      // 'select'|'deselect'|'pour-start'|'pour-end'|'invalid'
-                               // 'layer-complete'|'win'|'fail'|'undo'|'ui'|'hint'|'tick'
-  startAmbience(themeId), stopAmbience(),
-  setMusicIntensity(0..1),     // adaptive layers with completion progress
-  setMuted(bool), suspend(), resume(), dispose()
-}
-```
-
-## js/render.js  (browser only; imports 'three')
-
-```js
-export function isWebGLAvailable() -> bool
-export function probeGpu() -> {available:bool, gpu:string}   // unmasked renderer name for Auto
-export async function createRenderer({canvas, container, theme, paletteColors, decorSeed, settings,
-  graphics, detectedPreset, gpu, onVesselPick}) -> renderer
-// settings.ambientOnly (set by main.js): environment-only mode — the semantic
-// DOM board is the playable surface, so the 3D scene draws the shelf
-// environment, lighting, particles, and scene-level celebrations, with vessel
-// meshes, markers, and canvas picking disabled.
-renderer = {
-  setState(state, events?),    // rebuild/animate semantic vessel views from rules snapshot
-  setSelected(i|null),
-  previewTargets(from) -> [toIdx...],   // shows legal-target markers; clears on null
-  showInvalid(i, reason),               // shake + marker; explanation text is UI's job
-  playEvents(events, {instant=false}) -> Promise,  // pour/win animations; resolves when settled
-  skip(),                        // fast-forward: settle everything to exact logical state
-  setGraphics(savedGraphics, detectedPreset),  // live: shadows, post chain, IBL, detail, motes, scale
-  graphicsInfo() -> {gpu, detected, resolved, summary, pixels, fps, adaptiveScale, postFailed, postActive},
-  setQuality('high'|'medium'|'low'),     // legacy alias → setGraphics({preset})
-  setReducedMotion(bool),
-  setTheme(theme, paletteColors),
-  projectVessel(i) -> {x,y}|null,        // CSS px, for DOM label alignment
-  focusVessel(i|null),                   // keyboard/gamepad focus ring
-  resize(w,h,dpr), renderFrame(dtMs),    // main.js drives rAF loop; size is measured from the canvas box
-  setPaused(bool),                       // freeze decorative motion when hidden
-  dispose()
-}
-```
-
-## js/platform.js  (browser; every call degrades gracefully offline)
-
-```js
-export async function initPlatform() -> platform
-platform = {
-  hosted:bool, scope:string|null,        // scope from launch token, never hard-coded
-  profile:{displayName, avatarUrl}|null, // null = guest
-  serverNow() -> ms,                     // round-trip-adjusted via GET /api/v1/time; falls back to Date.now()
-  syncTime() -> Promise,
-  activityStart()/activityEnd(),
-  heartbeat(),                           // throttled presence while playing
-  submitScore(board, entry) -> Promise<{accepted, rank?}|{error}>,
-                               // entry = {levelId, seed, contentVersion, name?, sessionId,
-                               //   result:{score,moves,invalidActions,elapsedMs,assists,sessionId},
-                               //   replay:<envelope>}; only completed rounds are submitted
-  fetchLeaderboard(board, scope) -> Promise<[entries]|{error}>,  // falls back to local bests
-  unlockAchievement(key) -> Promise, // durable idempotent delivery when hosted
-  telemetry(event, data),            // consent-gated funnel events only; queued
-                               // as {type, data, t} to match the server aggregate
-  signIn() -> Promise                    // host shell flow; no-op guest message offline
-}
-```
-
-## js/ui.js + js/main.js (browser)
-
-`main.js`: boot sequence, capability detection, import-map bootstrap, rAF loop
-driving `renderer.renderFrame`, visibility/resize/orientation handling, global
-error surface, app state machine:
-`boot → title → profile-ready → mode-select → preparing → tutorial/countdown →
-active ↔ paused → resolving → results → progression`. Every transition records
-`{from,to,owner,reason}` in a debug log.
-
-`ui.js` exports `createUI({root, session-agnostic services...})` and owns all
-DOM: screens (title, mode select, setup, HUD, pause, results, help, settings,
-progression, daily, score chase), the DOM vessel mirror (fully playable without
-WebGL and the accessibility tree for the board), keyboard + gamepad input,
-focus management, aria-live announcements. UI state is fully separate from
-simulation state.
-
-Input mapping (defaults, remappable list stored in settings.bindings):
-Arrows/WASD move vessel focus; Enter/Space select+confirm; Esc pause/cancel;
-U undo; H hint; R restart; C camera reset. Gamepad: dpad/left stick focus,
-A confirm, B cancel, Start pause, X undo, Y hint.
+The browser build's `audio.js`, `render.js`, `platform.js`, `ui.js` and
+`main.js` are replaced by `native/*.ts` (see spec.md §1, §13). They use the
+modules above only through their exported functions: `main.ts` drives a
+`GameSession` per round with an injected clock on the runtime's fixed steps;
+`board.ts`/`screens.ts` draw from `session.state`/`session.selected` each
+frame and send intents (`selectVessel`, `undo`, `hint`, `restart`);
+`storage.js` keeps its `localStorage` contract through the shim in
+`native/platform.ts`; `js/migrate.js` (Node-safe) owns the engine save
+document `{ v: 1, progression, bests }` and the migration from the browser
+build's checksummed cloud save.
 
 ## server.js  (Node, no dependencies; also the static dev server)
 
@@ -288,11 +211,9 @@ golden sessions (easy/medium/hard/interrupted/resumed/terminal).
 
 ## Distribution root
 
-`starhermit.txt`:
-```
-name=Chromatic Pour
-launch=index.html
-server=server.js
-```
+`starhermit.txt` names the engine entry (`engine.entry=native/main.ts`), the
+pinned engine release, the loader (`launch=index.html`, written by
+`npm run package`) and the platform script (`server=score-script.js`); see
+spec.md §1. `server.js` is the local dev server and is not packaged.
 
 For isolated API tests, set `CP_DATA_DIR` to a temporary directory and `PORT=0` for an ephemeral port. `node tests/server-regression.mjs` exercises ranked acceptance/rejection, telemetry, achievements, and malformed URLs without modifying the normal runtime store.

@@ -14,7 +14,7 @@ const jsFiles = fs
 const files = [
   'server.js',
   ...jsFiles,
-  ...fs.readdirSync(path.join(ROOT, 'tests')).map((f) => path.join('tests', f)),
+  ...fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.(c|m)?js$/.test(f)).map((f) => path.join('tests', f)),
 ];
 
 let checked = 0;
