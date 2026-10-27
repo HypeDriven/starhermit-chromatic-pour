@@ -2,7 +2,7 @@
 
 **Pitch:** Pour glowing layers of liquid between glass vessels on an alchemist's shelf until every vessel holds a single colour, in as few pours as you can.
 **Genre:** Sorting puzzle (water-sort family) with seeded daily competition. **Players:** 1; asynchronous global/friends score comparison. **Round length:** 1–5 minutes (3 colours ≈ 1 min, 10 colours ≈ 5 min). **Session:** 5–20 minutes.
-**Platforms:** A StarHermit engine script game (engine 1.17.0, host API 1.19): natively in the StarHermit client, and in desktop and mobile browsers through the engine's web runtime; portrait and landscape. **Rendering:** the vessel board is drawn `starhermit:ui` widgets (the playable surface, as the browser build's DOM board was); a `starhermit:scene` shelf draws the environment, lighting and celebrations behind it.
+**Platforms:** A StarHermit engine script game (engine 1.18.0, host API 1.20): natively in the StarHermit client, and in desktop and mobile browsers through the engine's web runtime; portrait and landscape. **Rendering:** the vessel board is drawn `starhermit:ui` widgets (the playable surface, as the browser build's DOM board was); a `starhermit:scene` shelf draws the environment, lighting and celebrations behind it.
 
 This document describes the game as it runs today (present tense). Anything not yet implemented is listed only in §17.
 
@@ -10,7 +10,7 @@ This document describes the game as it runs today (present tense). Anything not 
 
 | Path | Role |
 |---|---|
-| `starhermit.txt` | Manifest: `name=Chromatic Pour`, `launch=index.html`, `engine.entry=native/main.ts`, `engine.version=1.17.0`, `engine.minor=17`, `engine.capabilities=platform,storage,clipboard`, `server=score-script.js`, `cover=cover.jpg`, eleven `control.*` actions with `engine.gamepad.*` defaults and two `engine.group.*` headings. |
+| `starhermit.txt` | Manifest: `name=Chromatic Pour`, `launch=index.html`, `engine.entry=native/main.ts`, `engine.version=1.18.0`, `engine.minor=17`, `engine.capabilities=platform,storage,clipboard`, `server=score-script.js`, `cover=cover.jpg`, eleven `control.*` actions with `engine.gamepad.*` defaults and two `engine.group.*` headings. |
 | `index.html`, `starhermit-files.json` | The engine's web loader and file index, written by `npm run package` (`starhermit package --web .`); never edited by hand. |
 | `native/main.ts` | Entry: the state machine, selection and pour intents with sounds and announcements, the pour lock and Skip, undo, hints, restart, lessons, timed challenges, outcomes, input actions, lifecycle. |
 | `native/screens.ts`, `native/style.ts` | Every screen, HUD, rail, tray, dialog and toast on `starhermit:ui`; styles from `assets/ui-style.json` (converted from `tools/ui-style.css` by `npm run css`) plus per-theme and palette tokens. |
