@@ -1,0 +1,47 @@
+# Screens: the Challenges list, Score chase with its board tabs, today's Daily
+# draught started, then from its pause card Settings and Help and back, and
+# Leave to title.
+until 300 Daily draught
+frames 10
+click Challenge
+until 120 The Measured Hand
+expect Ninety Heartbeats
+expect Move limit 40
+frames 10
+key Escape 2
+until 120 Score chase
+frames 10
+click Score chase
+until 120 Chase the score
+frames 10
+click Global all-time
+frames 20
+click Friends
+frames 20
+key Escape 2
+until 120 Daily draught
+frames 10
+click Daily draught
+until 120 Pour today’s draught
+frames 10
+click Pour today’s draught
+until 240 Vessel 1:
+frames 30
+key KeyP 2
+until 60 Resume
+frames 10
+click Settings
+until 60 Labels on liquids
+expect Hints enabled
+frames 10
+key Escape 2
+until 60 Resume
+frames 10
+click Help
+frames 60
+save help
+key Escape 2
+until 60 Leave to title
+frames 10
+click Leave to title
+until 120 Daily draught

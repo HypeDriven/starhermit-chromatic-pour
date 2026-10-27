@@ -1,0 +1,50 @@
+# Journey: stage 1 (Emberwine Prelude) from the title's Journey card, solved by
+# clicking vessels in the order the rules' solver gives (`node tools/gen-play.mjs 1`),
+# to the results.
+until 300 Daily draught
+frames 10
+click Journey
+until 120 The Journey
+frames 10
+key Enter 2
+until 240 Vessel 1:
+frames 60
+# j01 (Emberwine Prelude): 9 pours from the rules' solver
+click Vessel 1:
+frames 5
+click Vessel 4:
+frames 45
+click Vessel 2:
+frames 5
+click Vessel 4:
+frames 45
+click Vessel 2:
+frames 5
+click Vessel 1:
+frames 45
+click Vessel 2:
+frames 5
+click Vessel 4:
+frames 45
+click Vessel 1:
+frames 5
+click Vessel 2:
+frames 45
+click Vessel 3:
+frames 5
+click Vessel 1:
+frames 45
+click Vessel 3:
+frames 5
+click Vessel 2:
+frames 45
+click Vessel 3:
+frames 5
+click Vessel 4:
+frames 45
+click Vessel 1:
+frames 5
+click Vessel 3:
+frames 45
+until 240 Next: Verdigris Prelude
+expect First Pour

@@ -152,7 +152,7 @@ export function saveSettings(s) {
 
 // ---------------------------------------------------------------- progression
 
-function normalizeProgression(p) {
+export function normalizeProgression(p) {
   const base = JSON.parse(JSON.stringify(PROGRESSION_DEFAULTS));
   if (!isPlainObject(p)) return base;
   const out = { ...base, ...p };
@@ -290,7 +290,7 @@ export function listReplays() {
 
 // ---------------------------------------------------------------- best scores
 
-function isBetterScore(a, b) {
+export function isBetterScore(a, b) {
   if (!b) return true;
   if (!!a.complete !== !!b.complete) return !!a.complete;
   const sa = a.score ?? -Infinity, sb = b.score ?? -Infinity;
@@ -298,6 +298,20 @@ function isBetterScore(a, b) {
   const ma = a.moves ?? Infinity, mb = b.moves ?? Infinity;
   if (ma !== mb) return ma < mb;
   return (a.elapsedMs ?? a.ms ?? Infinity) < (b.elapsedMs ?? b.ms ?? Infinity);
+}
+
+/** Two bests maps merged: the better entry per board (cloud-save conflicts). */
+export function mergeBests(a, b) {
+  const x = isPlainObject(a) ? a : {};
+  const y = isPlainObject(b) ? b : {};
+  const out = {};
+  for (const k of new Set([...Object.keys(x), ...Object.keys(y)])) {
+    const p = isPlainObject(x[k]) ? x[k] : null;
+    const q = isPlainObject(y[k]) ? y[k] : null;
+    if (!p) { if (q) out[k] = q; continue; }
+    out[k] = q && isBetterScore(q, p) ? q : p;
+  }
+  return out;
 }
 
 export function loadBestScore(boardKey) {

@@ -1,0 +1,27 @@
+# Learn: lesson 1 (The First Decant) by keyboard — lift vessel 1, pour into the
+# first empty glass, pour vessel 2's top into an empty glass — back on the title.
+until 300 Daily draught
+frames 10
+click Play
+until 120 The First Decant
+frames 10
+click The First Decant
+until 240 STEP 1 OF 3
+frames 30
+key Enter 2
+frames 30
+key ArrowRight 2
+frames 5
+key ArrowRight 2
+frames 5
+key Enter 2
+frames 90
+key ArrowRight 2
+frames 5
+key Enter 2
+frames 30
+key ArrowRight 2
+frames 5
+key Enter 2
+until 240 Lesson complete
+expect Continue the Journey

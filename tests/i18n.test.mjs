@@ -1,11 +1,12 @@
-// Localization coverage: every English key the markup, code and content use is
-// translated in every locale (en-GB → en-US, es-ES → es-419, fr-CA → fr-FR
-// inherit), placeholders survive, and the language follows sh-language.js and
-// switches live.
+// Localization coverage: every English key the engine client (native/*.ts, its
+// tr()/N() literals) and the content use is translated in every locale (en-GB →
+// en-US, es-ES → es-419, fr-CA → fr-FR inherit), placeholders survive, and the
+// language switches live.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { loadTables, codeKeys, htmlKeys, audit, bootI18n } from './i18n-common.mjs';
+import { readdirSync, readFileSync } from 'node:fs';
+import vm from 'node:vm';
+import { loadTables, codeKeys, audit } from './i18n-common.mjs';
 import { THEMES, DIFFICULTIES, LESSONS, CHALLENGES } from '../js/content.js';
 import { ACHIEVEMENTS } from '../js/storage.js';
 import { INVALID_MESSAGES } from '../js/rules.js';
@@ -14,8 +15,8 @@ const ROOT = new URL('../', import.meta.url);
 const read = (p) => readFileSync(new URL(p, ROOT), 'utf8');
 
 export function usedKeys() {
-  const keys = new Set(htmlKeys(read('index.html')));
-  for (const f of ['js/ui.js', 'js/main.js', 'js/gfx.js']) codeKeys(read(f)).forEach((k) => keys.add(k));
+  const keys = new Set();
+  for (const f of readdirSync(new URL('native/', ROOT)).filter((n) => n.endsWith('.ts'))) codeKeys(read(`native/${f}`), [], ['tr', 'N']).forEach((k) => keys.add(k));
   for (const t of THEMES) keys.add(t.name);
   for (const d of DIFFICULTIES) { keys.add(d.label); keys.add(d.desc); }
   for (const l of LESSONS) { keys.add(l.title); for (const s of l.steps) { if (s.text) keys.add(s.text); if (s.hintText) keys.add(s.hintText); } }
@@ -36,15 +37,20 @@ test('session and rules messages shown to players are covered', () => {
   for (const m of read('js/rules.js').matchAll(/label: '([^']+)'/g)) assert.ok(usedKeys().includes(m[1]), m[1]);
 });
 
-test('the locale follows sh-language and switches live', () => {
-  const { I18N, events, doc } = bootI18n(ROOT, { strings: 'js/strings.js', i18n: 'js/i18n.js', global: 'CPI18N', languages: ['de-DE'] });
-  assert.equal(I18N.lang, 'de-DE');
-  assert.equal(doc.documentElement.lang, 'de-DE');
+test('setLocale switches the language live, with the regional fallbacks', () => {
+  // js/strings.js and js/i18n.js as classic scripts, as native/i18n.ts loads them.
+  const ctx = vm.createContext({});
+  vm.runInContext(read('js/strings.js'), ctx);
+  vm.runInContext(read('js/i18n.js'), ctx);
+  const I18N = ctx.CPI18N;
+  assert.equal(I18N.lang, 'en-US');
+  assert.equal(I18N.setLocale('de-DE'), 'de-DE');
   assert.equal(I18N.T('Resume'), 'Fortsetzen');
-  I18N.language.setChoice('fr-CA');
-  assert.equal(I18N.lang, 'fr-CA');
-  assert.equal(events.at(-1), 'fr-CA');
-  I18N.language.setChoice('en-GB');
+  assert.equal(I18N.setLocale('fr-CA'), 'fr-CA');
+  assert.equal(I18N.T('Score chase'), 'Chasse au pointage');
+  assert.equal(I18N.T('Open Options'), 'Ouvrir les Options', 'fr-CA falls back to fr-FR');
+  I18N.setLocale('en-GB');
   assert.equal(I18N.T('Color palette'), 'Colour palette');
   assert.equal(I18N.T('{n} moves', { n: 4 }), '4 moves');
+  assert.equal(I18N.setLocale('xx-YY'), 'en-US', 'an unknown locale is en-US');
 });

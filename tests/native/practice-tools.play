@@ -1,0 +1,42 @@
+# Practice: Begin practice on the default bench, then the round's tools by key —
+# a hint (H), a pour and its undo (U), a lift cancelled by Escape, P to pause,
+# Restart round from the pause card, the goal sheet from the menu button.
+until 300 Daily draught
+frames 10
+click Practice
+until 120 Begin practice
+frames 10
+click Begin practice
+until 240 Vessel 1:
+frames 60
+key KeyH 2
+frames 60
+click Vessel 1:
+frames 5
+click Vessel 5:
+frames 45
+key KeyU 2
+frames 45
+click Vessel 1:
+frames 10
+key Escape 2
+frames 30
+key KeyP 2
+until 60 Resume
+expect Restart round
+expect Leave to title
+frames 10
+click Restart round
+until 120 Vessel 1:
+frames 30
+click 32 30
+until 60 Close
+expect Apprentice Practice
+frames 10
+click Close
+frames 30
+key KeyP 2
+until 60 Leave to title
+frames 10
+click Leave to title
+until 120 Daily draught
