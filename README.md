@@ -4,7 +4,7 @@ An alchemist's liquid-sorting puzzle: pour colored liquids between vessels
 until every vessel holds a single uniform color. Fully deterministic rules
 engine, seeded daily boards, score-chase leaderboards.
 
-It is a StarHermit engine script game (engine 1.18.0): TypeScript in
+It is a StarHermit engine script game (engine 1.19.1): TypeScript in
 `native/` on the runtime's host API, played natively by the StarHermit client
 and in browsers through the engine's web runtime, which `index.html` (the
 loader `npm run package` writes) pins on wiki.starhermit.com. The hand-written
