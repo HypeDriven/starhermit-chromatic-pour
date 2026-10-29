@@ -22,7 +22,7 @@
 import {
   ACESFilmicToneMapping, AdditiveBlending, BoxGeometry, BufferAttribute, BufferGeometry, CanvasTexture, Color,
   ConeGeometry, CylinderGeometry, DirectionalLight, DoubleSide, Fog, Group, HemisphereLight, InstancedMesh, Material,
-  Matrix4, Mesh, MeshLambertMaterial, MeshPhysicalMaterial, MeshStandardMaterial, NoColorSpace, PMREMGenerator,
+  Matrix4, Mesh, MeshLambertMaterial, MeshPhysicalMaterial, MeshStandardMaterial, PMREMGenerator,
   PerspectiveCamera, PlaneGeometry, PointLight, Points, PointsMaterial, RepeatWrapping, RoomEnvironment, SRGBColorSpace,
   SphereGeometry, Sprite, SpriteMaterial, Vector2, renderer, scene, type Texture,
 } from "starhermit:scene";
@@ -50,20 +50,21 @@ let wide = false;
 const rng = decorStream("chromatic-pour-ember");
 const fxRng = rng.fork("fx");
 
-// --- lights (three.js intensities ÷ π: the engine's lights are physically based) ---
-const hemi = new HemisphereLight(0xffe6c8, 0x2a1a10, 0.9 / PI);
-const keyLight = new DirectionalLight(0xffd9a8, 2.6 / PI);
+// --- lights and shadow box: the browser build's own values (three.js r160 parity at engine minor 28) ---
+const hemi = new HemisphereLight(0xffe6c8, 0x2a1a10, 0.9);
+const keyLight = new DirectionalLight(0xffd9a8, 2.6);
 keyLight.position.set(4, 6.5, 5);
 keyLight.target.position.set(0, -0.6, -1.2);
 keyLight.shadow.bias = -0.0015;
 keyLight.shadow.normalBias = 0.02;
 keyLight.shadow.radius = 3;
-keyLight.shadow.distance = 24;
-const rimLight = new DirectionalLight(0x9fb8ff, 0.9 / PI);
+Object.assign(keyLight.shadow.camera, { left: -7.2, right: 7.2, top: 4.2, bottom: -4.4, near: 3, far: 19 });
+keyLight.shadow.camera.updateProjectionMatrix();
+const rimLight = new DirectionalLight(0x9fb8ff, 0.9);
 rimLight.position.set(-5, 3.5, -4);
 scene.add(hemi, keyLight, keyLight.target, rimLight, rimLight.target);
 scene.fog = new Fog(0x3a1d12, 12, 30);
-const base = { hemi: 0.9 / PI, key: 2.6 / PI, rim: 0.9 / PI };
+const base = { hemi: 0.9, key: 2.6, rim: 0.9 };
 let dim = 1;
 
 // --- procedural textures (seeded) ---
@@ -115,8 +116,8 @@ function woodTexture(size: number): Texture {
   return tex;
 }
 /** The detailed wall: laid stone blocks with mortar, plaster wash and speckle, and the
- * relief (the browser build's bump map) as a normal map. */
-function stoneTextures(bg: string, size: number): { map: Texture; normal: Texture } {
+ * relief as its bump map. */
+function stoneTextures(bg: string, size: number): { map: Texture; bump: Texture } {
   const r = rng.fork("stone");
   const W = 512, H = 256, k = size / W;
   const cv = new OffscreenCanvas(size, Math.round(H * k));
@@ -159,33 +160,11 @@ function stoneTextures(bg: string, size: number): { map: Texture; normal: Textur
   wash.addColorStop(1, "rgba(0,0,0,0.4)");
   g.fillStyle = wash;
   g.fillRect(0, 0, W, H);
-  // heights → tangent-space normals (green up)
-  const bw = bump.width, bh = bump.height;
-  const src = b.getImageData(0, 0, bw, bh).data;
-  const nc = new OffscreenCanvas(bw, bh);
-  const nctx = nc.getContext("2d");
-  const img = nctx.createImageData(bw, bh);
-  const hgt = (x: number, y: number): number => src[(((y + bh) % bh) * bw + ((x + bw) % bw)) * 4]! / 255;
-  const strength = 2.2;
-  for (let y = 0; y < bh; y++) {
-    for (let x = 0; x < bw; x++) {
-      const dx = (hgt(x + 1, y) - hgt(x - 1, y)) * strength;
-      const dy = (hgt(x, y + 1) - hgt(x, y - 1)) * strength;
-      const l = Math.hypot(dx, dy, 1);
-      const o = (y * bw + x) * 4;
-      img.data[o] = Math.round(((-dx / l) * 0.5 + 0.5) * 255);
-      img.data[o + 1] = Math.round(((dy / l) * 0.5 + 0.5) * 255);
-      img.data[o + 2] = Math.round(((1 / l) * 0.5 + 0.5) * 255);
-      img.data[o + 3] = 255;
-    }
-  }
-  nctx.putImageData(img, 0, 0);
   const map = new CanvasTexture(cv);
   map.colorSpace = SRGBColorSpace;
-  const normal = new CanvasTexture(nc);
-  normal.colorSpace = NoColorSpace;
-  for (const t of [map, normal]) { t.wrapS = t.wrapT = RepeatWrapping; t.repeat.set(6, 3); t.anisotropy = size > 512 ? 8 : 4; }
-  return { map, normal };
+  const bumpTex = new CanvasTexture(bump);
+  for (const t of [map, bumpTex]) { t.wrapS = t.wrapT = RepeatWrapping; t.repeat.set(6, 3); t.anisotropy = size > 512 ? 8 : 4; }
+  return { map, bump: bumpTex };
 }
 function spriteTexture(stops: [number, string][], inner = 0, cy = 16): Texture {
   const c = new OffscreenCanvas(64, 64);
@@ -235,13 +214,13 @@ function lathe(points: [number, number][], segments: number): BufferGeometry {
   return geo;
 }
 
-interface LitParams { color?: string | number | Color; map?: Texture | null; roughness?: number; metalness?: number; emissive?: string | number | Color; emissiveIntensity?: number; normalMap?: Texture | null; clearcoat?: number }
+interface LitParams { color?: string | number | Color; map?: Texture | null; roughness?: number; metalness?: number; emissive?: string | number | Color; emissiveIntensity?: number; bumpMap?: Texture | null; bumpScale?: number; clearcoat?: number }
 /** Lit material for the level's budget: Lambert on Low, Standard on Balanced, Physical (clearcoat) above where asked. */
 function lit(p: LitParams, physical = false): Material {
   const kind = look?.budget.material ?? "standard";
-  const baseP = { color: p.color ?? 0xffffff, map: p.map ?? null, ...(p.emissive !== undefined ? { emissive: p.emissive, emissiveIntensity: p.emissiveIntensity ?? 1 } : {}) };
+  const baseP = { color: p.color ?? 0xffffff, map: p.map ?? null, ...(p.bumpMap ? { bumpMap: p.bumpMap, bumpScale: p.bumpScale ?? 1 } : {}), ...(p.emissive !== undefined ? { emissive: p.emissive, emissiveIntensity: p.emissiveIntensity ?? 1 } : {}) };
   if (kind === "lambert") return new MeshLambertMaterial(baseP);
-  const std = { ...baseP, roughness: p.roughness ?? 1, metalness: p.metalness ?? 0, ...(p.normalMap ? { normalMap: p.normalMap } : {}) };
+  const std = { ...baseP, roughness: p.roughness ?? 1, metalness: p.metalness ?? 0 };
   if (physical && kind === "physical") return new MeshPhysicalMaterial({ ...std, clearcoat: p.clearcoat ?? 0.5, clearcoatRoughness: 0.2 });
   return new MeshStandardMaterial(std);
 }
@@ -251,7 +230,7 @@ let world: Group | null = null;
 let builtKey = "";
 let woodTex: Texture | null = null;
 let woodSize = 0;
-let stone: { map: Texture; normal: Texture; size: number; bg: string } | null = null;
+let stone: { map: Texture; bump: Texture; size: number; bg: string } | null = null;
 let wallTex: Texture | null = null;
 let wallBg = "";
 let flame: Sprite | null = null;
@@ -283,11 +262,12 @@ function build(): void {
       const t = stoneTextures(theme.bg, look.budget.stoneTexture);
       stone = { ...t, size: look.budget.stoneTexture, bg: theme.bg };
     }
-    wallMat = lit({ map: stone.map, normalMap: look.budget.material === "lambert" ? null : stone.normal, roughness: 0.9 });
+    wallMat = lit({ map: stone.map, bumpMap: stone.bump, bumpScale: 2.2, roughness: 0.9 });
   } else {
     if (!wallTex || wallBg !== theme.bg) { wallTex = wallTexture(theme.bg); wallBg = theme.bg; }
     wallMat = lit({ map: wallTex, roughness: 0.95 });
   }
+  envI.set(wallMat, 0.04);
   const wall = new Mesh(new PlaneGeometry(34, 18), wallMat);
   wall.position.set(0, 4.5, -4.5);
   wall.receiveShadow = true;
@@ -295,7 +275,8 @@ function build(): void {
 
   // shelves
   if (!woodTex || woodSize !== look.budget.woodTexture) { woodTex = woodTexture(look.budget.woodTexture); woodSize = look.budget.woodTexture; }
-  const shelfMat = lit({ map: woodTex, color: theme.shelf, roughness: detailed ? 0.62 : 0.8, metalness: 0.05 });
+  const shelfMat = lit({ map: woodTex, color: theme.shelf, roughness: detailed ? 0.62 : 0.8, metalness: 0.05, bumpMap: detailed ? woodTex : null, bumpScale: 1.4 });
+  envI.set(shelfMat, 0.3);
   const shelfGeo = new BoxGeometry(13, 0.28, 2.8);
   const shelfMain = new Mesh(shelfGeo, shelfMat);
   shelfMain.position.set(0, -0.14, 0);
@@ -308,7 +289,8 @@ function build(): void {
   g.add(shelfLow);
 
   // brass (reflections on: polished metal; off: duller)
-  const brass = lit({ color: 0xb08038, metalness: look.reflections ? 1 : 0.35, roughness: look.reflections ? 0.32 : 0.5, clearcoat: 0.3 }, true);
+  const brass = lit({ color: 0xb08038, metalness: look.reflections ? 1 : 0.35, roughness: look.reflections ? 0.32 : 0.5 });
+  envI.set(brass, 0.6);
   if (detailed) {
     const trimGeo = new BoxGeometry(13.02, 0.035, 0.03);
     for (const [y, z] of [[-0.03, 1.4], [-2.29, 1.2]] as const) {
@@ -369,7 +351,7 @@ function build(): void {
   flame.position.set(4.5, 0.62, -0.75);
   flame.scale.set(0.16, 0.24, 1);
   g.add(flame);
-  candleLight = new PointLight(warm ? 0xffb060 : 0xffc890, 5 / PI, 5, 2);
+  candleLight = new PointLight(warm ? 0xffb060 : 0xffc890, 5, 5, 2);
   candleLight.position.set(4.5, 0.75, -0.6);
   g.add(candleLight);
 
@@ -408,6 +390,7 @@ function build(): void {
     const glass = look.budget.material === "lambert"
       ? new MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.3, side: DoubleSide, depthWrite: false })
       : new MeshStandardMaterial({ color: 0xffffff, roughness: 0.05, metalness: 0, transparent: true, opacity: 0.3, side: DoubleSide, depthWrite: false });
+    envI.set(glass, 0.9);
     const pts: [number, number][] = [];
     for (let i = 0; i <= 10; i++) {
       const a = -PI / 2 + (i / 10) * PI * 0.85;
@@ -448,6 +431,25 @@ function build(): void {
   placeOrbs(0);
 
   applyThemeLights();
+  applyEnv();
+}
+
+/** The browser build (three.js r160) scaled scene.environment per material by envMapIntensity
+ * (wall 0.04, shelves 0.3, brass 0.6, glass 0.9, other props 0.15); from engine minor 20 the
+ * scene's environment ignores that, so each standard material takes the room as its own envMap. */
+const envI = new WeakMap<Material, number>();
+function applyEnv(): void {
+  scene.environment = null;
+  const on = !!look?.reflections && !!envTex;
+  world?.traverse((o) => {
+    const m = (o as Mesh).material as Material | Material[] | undefined;
+    if (!m) return;
+    for (const mat of Array.isArray(m) ? m : [m]) {
+      if (!(mat instanceof MeshStandardMaterial)) continue;
+      mat.envMap = on ? envTex : null;
+      mat.envMapIntensity = envI.get(mat) ?? 0.15;
+    }
+  });
 }
 
 function applyThemeLights(): void {
@@ -607,15 +609,11 @@ export function applyLook(next: Look): void {
   if (shadows) keyLight.shadow.mapSize = next.shadows;
   if (next.reflections) {
     if (!envTex) {
-      try { envTex = new PMREMGenerator().fromScene(new RoomEnvironment(), 0.04).texture; }
+      try { envTex = new PMREMGenerator(renderer).fromScene(new RoomEnvironment(renderer), 0.04).texture; }
       catch (e) { console.warn("environment:", e instanceof Error ? e.message : String(e)); }
     }
-    scene.environment = envTex;
-    // The room environment is far brighter than a candlelit shelf: diffuse
-    // props took only a hint of it in the browser build (envMapIntensity
-    // 0.04–0.3; glass and brass more), one strength here.
-    scene.environmentIntensity = 0.25;
-  } else scene.environment = null;
+  }
+  applyEnv();
   motes.visible = next.budget.motes > 0;
   moteGeo.setDrawRange(0, next.budget.motes);
   renderer.ao = next.ao === "off" ? null : {
@@ -649,7 +647,11 @@ export function setPlayfield(x: number, y: number, w: number, h: number, W: numb
   const next = { x, y, w: Math.max(1, w), h: Math.max(1, h), W: Math.max(1, W), H: Math.max(1, H) };
   if (Object.entries(next).every(([k, v]) => Math.abs(v - (view as Record<string, number>)[k]!) < 0.5)) return;
   view = next;
+  // The browser build's canvas was the playfield: its aspect is the camera's (from minor 20 the
+  // engine keeps the camera's own aspect, so it is set here, not taken from the window).
+  camera.aspect = view.w / view.h;
   camera.setViewOffset(view.w, view.h, -view.x, -view.y, view.W, view.H);
+  camera.updateProjectionMatrix();
   frameCamera();
 }
 /** js/render.js frameCamera in its ambient mode: a seven-vessel row fitted to the playfield's aspect, 12 % farther. */
@@ -698,7 +700,7 @@ export function update(dtIn: number): void {
     flame.scale.set(0.16 * f, 0.24 * (2 - f) * 0.5 + 0.12, 1);
     flame.material.opacity = 0.75 + 0.2 * Math.sin(a * 0.011 + flamePhase);
     const flick = 0.9 + 0.15 * Math.sin(a * 0.012 + flamePhase);
-    if (candleLight) candleLight.intensity = (5 / PI) * flick * dim;
+    if (candleLight) candleLight.intensity = 5 * flick * dim;
     if (halo) halo.material.opacity = 0.3 * flick * dim;
   }
   if (!reducedMotion) {
