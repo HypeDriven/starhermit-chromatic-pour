@@ -1,16 +1,20 @@
-// The look per graphics level: the browser build's four presets and budgets
-// (js/gfx.js TABLE / BUDGETS, each tuned to hold 60 FPS on the weakest GPU
-// Auto gave it) keyed by the runtime's quality tier (frame().quality), with
-// the dust motes and celebration particles scaled within the tier by the
-// level (frame().levelIndex), as the browser build scaled them by its
-// hardware level. The runtime owns the rest of what the old Graphics panel
-// did: Auto and the level choice, render scale and the pixel-ratio cap,
-// adaptive resolution, the frame-rate limit and readout, and the
-// shadow-map size and MSAA samples it holds to the level. The old panel's
-// per-category overrides are not offered (the runtime's Options choose a
-// level). The refracting "transmission" flask glass of High and Ultra is
-// clear glass on the engine (it draws no transmission).
-import type { QualityTier } from "starhermit:engine";
+// The look per graphics level. The engine-owned effects (shadows and their
+// map size, ambient occlusion, bloom and their resolutions, the grade,
+// anti-aliasing) are the level's own (levelSettings(): the same table every
+// StarHermit game reads). The game's art (materials, wood and stone
+// textures, round-prop segments, reflections, the detailed wall and props)
+// is the browser build's four presets (js/gfx.js TABLE / BUDGETS, each tuned
+// to hold 60 FPS on the weakest GPU Auto gave it) keyed by the level's
+// quality tier, with the dust motes and celebration particles scaled within
+// the tier by the level's particle budget against the tier's anchor level
+// (quantum, molecular, terrestrial, galactic), at most 4×. The runtime owns
+// what the old Graphics panel did besides: Auto and the level choice, render
+// scale and the pixel-ratio cap, adaptive resolution and the frame-rate
+// limit and readout. The old panel's per-category overrides are not offered
+// (the runtime's Options choose a level). The refracting "transmission"
+// flask glass of High and Ultra is clear glass on the engine (it draws no
+// transmission).
+import { levelSettings, type GraphicsLevel, type LevelSettings, type QualityTier } from "starhermit:engine";
 import type { AntialiasMode } from "starhermit:scene";
 
 export type Preset = QualityTier;
@@ -28,9 +32,12 @@ export interface Budget {
 }
 export interface Look {
   preset: Preset;
-  shadows: 0 | 512 | 1024 | 2048;
-  ao: "off" | "on" | "high";
-  bloom: boolean;
+  /** The level's key-light shadow map size, 0 when the level draws no shadows. */
+  shadows: number;
+  /** The level's ambient occlusion (null: off). */
+  ao: { resolution: number; samples: number; denoiseSamples: number } | null;
+  /** The level's bloom resolution as a fraction of the frame (null: off). */
+  bloom: number | null;
   grade: boolean;
   antialias: AntialiasMode;
   /** Room-environment reflections on glass and brass. */
@@ -40,11 +47,12 @@ export interface Look {
   budget: Budget;
 }
 
-const TABLE: Record<Preset, Omit<Look, "preset" | "budget">> = {
-  low: { shadows: 0, ao: "off", bloom: false, grade: false, antialias: "msaa", reflections: false, detailed: false },
-  balanced: { shadows: 512, ao: "off", bloom: true, grade: true, antialias: "fxaa", reflections: true, detailed: true },
-  high: { shadows: 1024, ao: "on", bloom: true, grade: true, antialias: "smaa", reflections: true, detailed: true },
-  ultra: { shadows: 2048, ao: "high", bloom: true, grade: true, antialias: "msaa", reflections: true, detailed: true },
+type Art = Pick<Look, "reflections" | "detailed">;
+const TABLE: Record<Preset, Art> = {
+  low: { reflections: false, detailed: false },
+  balanced: { reflections: true, detailed: true },
+  high: { reflections: true, detailed: true },
+  ultra: { reflections: true, detailed: true },
 };
 const BUDGETS: Record<Preset, Budget> = {
   low: { material: "lambert", woodTexture: 128, stoneTexture: 256, segments: 0.5, motes: 0, particles: 60 },
@@ -54,16 +62,30 @@ const BUDGETS: Record<Preset, Budget> = {
 };
 export const MOTE_CAP = 160;
 export const PARTICLE_CAP = 1000;
-/** The first level index of each tier (quantum, molecular, terrestrial, galactic). */
-const TIER_FLOOR: Record<Preset, number> = { low: 0, balanced: 2, high: 4, ultra: 7 };
+/** Each tier's reference level: its budgets are tuned there. */
+const ANCHOR: Record<Preset, GraphicsLevel> = { low: "quantum", balanced: "molecular", high: "terrestrial", ultra: "galactic" };
 
-/** The look for a quality tier at a level index (0 quantum … 9 infinite). */
-export function lookFor(preset: Preset, levelIndex: number): Look {
+/** The look for a graphics level (the frame's by default). */
+export function lookFor(s: LevelSettings = levelSettings()): Look {
+  const preset = s.quality;
   const b = { ...BUDGETS[preset] };
-  // Levels are about 1.64× apart in GPU throughput: counts grow with the
-  // level above the tier's first, at most four times the tier's budget.
-  const k = Math.min(4, Math.pow(1.64, Math.max(0, levelIndex - TIER_FLOOR[preset])));
+  // Counts grow with the level's particle budget above the tier's anchor,
+  // at most four times the tier's budget.
+  const k = Math.min(4, s.particles / levelSettings(ANCHOR[preset]).particles);
   b.motes = Math.min(MOTE_CAP, Math.round(b.motes * k));
   b.particles = Math.min(PARTICLE_CAP, Math.round(b.particles * k));
-  return { preset, ...TABLE[preset], budget: b };
+  b.woodTexture = Math.min(b.woodTexture, s.maxTextureSize);
+  b.stoneTexture = Math.min(b.stoneTexture, s.maxTextureSize);
+  return {
+    preset, ...TABLE[preset], budget: b,
+    shadows: s.shadows ? s.shadowMapSize : 0,
+    ao: s.ao && { resolution: s.ao.resolution, samples: s.ao.samples, denoiseSamples: s.ao.denoiseSamples },
+    bloom: s.bloom ? s.bloom.resolution : null,
+    grade: s.grade,
+    // Clamped game-side: on the AMD iGPU bench (tools/engine-tier-bench.mjs, journey stage 1)
+    // quantum's antialias "off" measured 18.1-18.8 ms frame interval p50 against 14.1-14.6 ms
+    // with "msaa" (the level's 4 samples), so Low keeps the browser build's MSAA (reported
+    // to the engine session as an anti-aliasing-off cost anomaly).
+    antialias: s.antialias === "off" && preset === "low" ? "msaa" : s.antialias,
+  };
 }

@@ -1,0 +1,39 @@
+# Tier bench (tools/engine-tier-bench.mjs): journey stage 1 (Emberwine
+# Prelude, a fixed puzzle), its first six pours from
+# tests/native/journey-stage.play (the rules' solver) measured, then the
+# settled table (flasks, liquid, flames, particles).
+until 300 Daily draught
+frames 10
+click Journey
+until 120 The Journey
+frames 10
+key Enter 2
+until 240 Vessel 1:
+frames 120
+measure start
+click Vessel 1:
+frames 5
+click Vessel 4:
+frames 45
+click Vessel 2:
+frames 5
+click Vessel 4:
+frames 45
+click Vessel 2:
+frames 5
+click Vessel 1:
+frames 45
+click Vessel 2:
+frames 5
+click Vessel 4:
+frames 45
+click Vessel 1:
+frames 5
+click Vessel 2:
+frames 45
+click Vessel 3:
+frames 5
+click Vessel 1:
+frames 45
+frames 300
+measure stop

@@ -572,7 +572,7 @@ export function applyLook(next: Look): void {
   const shadows = next.shadows > 0;
   renderer.shadowMap.enabled = shadows;
   keyLight.castShadow = shadows;
-  if (shadows) keyLight.shadow.mapSize = next.shadows;
+  if (shadows) keyLight.shadow.mapSize = next.shadows; // the level's size (since minor 23 the engine keeps the game's)
   if (next.reflections) {
     if (!envTex) {
       try { const envRoom = new RoomEnvironment(renderer); envRoom.position.y = 0; /* the page's three (pre-r183) builds the room at the origin */ envTex = new PMREMGenerator(renderer).fromScene(envRoom, 0.04).texture; }
@@ -582,14 +582,16 @@ export function applyLook(next: Look): void {
   applyEnv();
   motes.visible = next.budget.motes > 0;
   moteGeo.setDrawRange(0, next.budget.motes);
-  renderer.ao = next.ao === "off" ? null : {
+  // The level's AO samples and resolution; full resolution is the engine's "high" (wider denoise).
+  const ao = next.ao, full = !!ao && ao.resolution >= 1;
+  renderer.ao = ao && {
     blendIntensity: 0.75, radius: 0.45, distanceExponent: 1.4, thickness: 1.2, scale: 1.0,
-    samples: next.ao === "high" ? 16 : 8,
-    denoise: { lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: next.ao === "high" ? 6 : 4, rings: 2, samples: next.ao === "high" ? 16 : 8, radiusExponent: 2 },
+    samples: ao.samples, resolution: ao.resolution,
+    denoise: { lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: full ? 6 : 4, rings: 2, samples: ao.denoiseSamples, radiusExponent: 2 },
   };
   // High threshold: only the flame, orbs and glowing draughts bloom.
   // r160 page: its UnrealBloomPass(0.6, 0.45, 0.9) exactly (model "r160", strength as written).
-  renderer.bloom = next.bloom ? { model: "r160", strength: 0.6, radius: 0.45, threshold: 0.9, resolution: 0.5 } : null;
+  renderer.bloom = next.bloom === null ? null : { model: "r160", strength: 0.6, radius: 0.45, threshold: 0.9, resolution: next.bloom };
   // The browser build's grade pass after OutputPass: a 0.22 smoothstep S-curve (contrastCurve "s"), saturation 1.1,
   // cool shadows / warm highlights, the 0.3 vignette.
   renderer.grade = next.grade ? {

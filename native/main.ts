@@ -18,7 +18,7 @@
 // a hidden window and slow frames never cost time, and play scripts replay
 // exactly. Cosmetic timings (the countdown, the pour, the settle before
 // results) count fixed steps too.
-import { frame, onFixedUpdate, onQuit, onRender, onResume, onStart, onSuspend, onUpdate, onPreferencesChange, preferences, setFixedRate, openMenu } from "starhermit:engine";
+import { frame, levelSettings, onFixedUpdate, onQuit, onRender, onResume, onStart, onSuspend, onUpdate, onPreferencesChange, preferences, setFixedRate, openMenu } from "starhermit:engine";
 import { isKeyDown, onAction } from "starhermit:input";
 import * as ui from "starhermit:ui";
 import { onSessionEnded, onPlayerChange, requestSignIn } from "starhermit:platform";
@@ -839,10 +839,10 @@ onAction((e) => {
 let lookKey = "";
 function applyLook(): void {
   const f = frame();
-  const key = `${f.quality}:${f.levelIndex}`;
+  const key = f.level;
   if (key === lookKey) return;
   lookKey = key;
-  const look = lookFor(f.quality, f.levelIndex);
+  const look = lookFor(levelSettings(f.level));
   render.applyLook(look);
   board.setDetailed(look.detailed);
 }
