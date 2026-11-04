@@ -17,9 +17,9 @@
 // (createClip) with the same envelopes; the ambience is a 20-second loop
 // whose ends cross-fade. The synthesized stand-ins it played while a sample
 // loaded are not ported (the engine's web runtime drops clip loads while a
-// synthesis graph changes: the arrow-exodus finding). Clips load once the
-// mixer runs (natively at once, in a browser after the first press), one at
-// a time, and the rendered voices are made one a frame after them.
+// synthesis graph changes: the arrow-exodus finding). The clips all load at
+// once in onStart; the rendered voices are made one a frame and the sound
+// starts once the mixer runs (in a browser after the first press).
 import { context, createClip, loadClip, play as playClip, type AudioClip, type Bus, type Sound } from "starhermit:audio";
 import { audioStream, hashSeed } from "../js/rng.js";
 
@@ -30,18 +30,12 @@ const INTERFACE = new Set<string>(["ui"]);
 const SCALE = [220.0, 261.63, 293.66, 329.63, 392.0, 440.0];
 
 const clips = new Map<string, AudioClip>();
-const queue: string[] = [];
-let loading = false;
-let wantClips = false;
-function load(name: string): void { if (!queue.includes(name) && !clips.has(name)) queue.push(name); }
-function pump(): void {
-  if (loading || !queue.length) return;
-  const name = queue.shift()!;
-  loading = true;
-  loadClip(`sfx/${name}.opus`).then((c) => { clips.set(name, c); loading = false; }, (e: unknown) => { console.warn(`sfx ${name}: ${String(e)}`); loading = false; });
+/** Loads every clip at once (onStart); a cue whose clip is still loading is skipped. */
+export function loadSfx(): void {
+  for (const name of EVENTS) {
+    loadClip(`sfx/${name}.opus`).then((c) => { clips.set(name, c); }, (e: unknown) => console.warn(`sfx ${name}: ${String(e)}`));
+  }
 }
-/** Asks for the clips; they load once the mixer runs (see update). */
-export function loadSfx(): void { wantClips = true; }
 
 const rng = audioStream("chromatic-pour");
 const musicRng = rng.fork("music");
@@ -53,7 +47,7 @@ export function play(name: SoundName, pitch = 1): void {
   if (!clip) return;
   const bus: Bus = INTERFACE.has(name) ? "interface" : "effects";
   try { playClip(clip, { bus, gain: LEVEL.effects, pitch: Math.max(0.125, Math.min(8, pitch * variant)) }); }
-  catch { clips.delete(name); load(name); } // a clip the mixer lost: load it again
+  catch { /* the mixer is full this frame: skip it */ }
 }
 
 // -- rendered voices ------------------------------------------------------------------------
@@ -172,16 +166,10 @@ function voice(clip: AudioClip | undefined, bus: Bus, gain: number): void {
   try { playClip(clip, { bus, gain }); } catch { /* the mixer is full */ }
 }
 
-/** Each frame: the samples once the mixer runs, one rendered voice a frame,
+/** Each frame once the mixer runs: one rendered voice a frame,
  * then the music's steps and the ambience's loop by mixer time. */
 export function update(): void {
   if (context.state !== "running") return;
-  if (wantClips) {
-    wantClips = false;
-    for (const name of EVENTS) load(name);
-  }
-  pump();
-  if (loading || queue.length) return;
   try { if (renderNext()) return; } catch (e) { console.warn(`audio: ${String(e)}`); return; }
   const now = context.currentTime;
   // ambience (a family change cross-fades)

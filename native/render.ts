@@ -21,7 +21,7 @@
 // vessels are board.ts's widgets.
 import {
   ACESFilmicToneMapping, AdditiveBlending, BoxGeometry, BufferAttribute, BufferGeometry, CanvasTexture, Color,
-  ConeGeometry, CylinderGeometry, DirectionalLight, DoubleSide, Fog, Group, HemisphereLight, InstancedMesh, Material,
+  ConeGeometry, CylinderGeometry, DirectionalLight, DoubleSide, Fog, Group, HemisphereLight, InstancedMesh, LatheGeometry, Material,
   Matrix4, Mesh, MeshLambertMaterial, MeshPhysicalMaterial, MeshStandardMaterial, PMREMGenerator,
   PerspectiveCamera, PlaneGeometry, PointLight, Points, PointsMaterial, RepeatWrapping, RoomEnvironment, SRGBColorSpace,
   SphereGeometry, Sprite, SpriteMaterial, Vector2, renderer, scene, type Texture,
@@ -179,40 +179,6 @@ function spriteTexture(stops: [number, string][], inner = 0, cy = 16): Texture {
 }
 const flameTex = spriteTexture([[0, "rgba(255,250,220,1)"], [0.35, "rgba(255,190,90,0.9)"], [0.7, "rgba(255,120,40,0.35)"], [1, "rgba(255,90,20,0)"]], 2, 18);
 const dotTex = spriteTexture([[0, "rgba(255,255,255,1)"], [0.35, "rgba(255,255,255,0.75)"], [1, "rgba(255,255,255,0)"]]);
-
-/** A LatheGeometry (the engine has none): the profile turned about y. */
-function lathe(points: [number, number][], segments: number): BufferGeometry {
-  const n = points.length;
-  const pn: [number, number][] = [];
-  for (let j = 0; j < n; j++) {
-    const prev = points[Math.max(0, j - 1)]!, next = points[Math.min(n - 1, j + 1)]!;
-    const dx = next[0] - prev[0], dy = next[1] - prev[1];
-    const l = Math.hypot(dx, dy) || 1;
-    pn.push([dy / l, -dx / l]);
-  }
-  const pos: number[] = [], nrm: number[] = [], uv: number[] = [], idx: number[] = [];
-  for (let i = 0; i <= segments; i++) {
-    const phi = (i / segments) * PI * 2, s = Math.sin(phi), c = Math.cos(phi);
-    for (let j = 0; j < n; j++) {
-      const [r, y] = points[j]!;
-      pos.push(r * s, y, r * c);
-      nrm.push(pn[j]![0] * s, pn[j]![1], pn[j]![0] * c);
-      uv.push(i / segments, j / (n - 1));
-    }
-  }
-  for (let i = 0; i < segments; i++) {
-    for (let j = 0; j < n - 1; j++) {
-      const a = i * n + j, b = a + n, c2 = b + 1, d = a + 1;
-      idx.push(a, b, d, c2, d, b);
-    }
-  }
-  const geo = new BufferGeometry();
-  geo.setAttribute("position", new BufferAttribute(new Float32Array(pos), 3));
-  geo.setAttribute("normal", new BufferAttribute(new Float32Array(nrm), 3));
-  geo.setAttribute("uv", new BufferAttribute(new Float32Array(uv), 2));
-  geo.setIndex(idx);
-  return geo;
-}
 
 interface LitParams { color?: string | number | Color; map?: Texture | null; roughness?: number; metalness?: number; emissive?: string | number | Color; emissiveIntensity?: number; bumpMap?: Texture | null; bumpScale?: number; clearcoat?: number }
 /** Lit material for the level's budget: Lambert on Low, Standard on Balanced, Physical (clearcoat) above where asked. */
@@ -397,7 +363,7 @@ function build(): void {
       pts.push([Math.max(0.001, 0.26 * Math.cos(a)), 0.26 + 0.26 * Math.sin(a)]);
     }
     pts.push([0.07, 0.62], [0.07, 0.78], [0.085, 0.8]);
-    const flaskGeo = lathe(pts, seg(24));
+    const flaskGeo = new LatheGeometry(pts.map(([r, y]) => new Vector2(r, y)), seg(24));
     const draughtGeo = new SphereGeometry(0.23, seg(20), seg(12), 0, PI * 2, PI * 0.42, PI * 0.58);
     const corkMat = lit({ color: 0x8a6440, roughness: 0.95 });
     for (const [x, z] of [[-3.7, -0.2], [3.2, -0.45]] as const) {
