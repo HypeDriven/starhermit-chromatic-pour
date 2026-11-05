@@ -82,10 +82,6 @@ export function lookFor(s: LevelSettings = levelSettings()): Look {
     ao: s.ao && { resolution: s.ao.resolution, samples: s.ao.samples, denoiseSamples: s.ao.denoiseSamples },
     bloom: s.bloom ? s.bloom.resolution : null,
     grade: s.grade,
-    // Clamped game-side: on the AMD iGPU bench (tools/engine-tier-bench.mjs, journey stage 1)
-    // quantum's antialias "off" measured 18.1-18.8 ms frame interval p50 against 14.1-14.6 ms
-    // with "msaa" (the level's 4 samples), so Low keeps the browser build's MSAA (reported
-    // to the engine session as an anti-aliasing-off cost anomaly).
-    antialias: s.antialias === "off" && preset === "low" ? "msaa" : s.antialias,
+    antialias: s.antialias,
   };
 }
