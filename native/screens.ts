@@ -22,14 +22,14 @@ import * as content from "../js/content.js";
 import * as rules from "../js/rules.js";
 import * as storage from "../js/storage.js";
 import * as M from "../js/migrate.js";
-import { tr, N, pt } from "./i18n.ts";
+import { tr, N } from "./i18n.ts";
 import * as platform from "./platform.ts";
 import * as render from "./render.ts";
 import * as audio from "./audio.ts";
 import { buildBoard, layoutBoard } from "./board.ts";
 import {
   app, round, session, settings, CHASE_BOARDS, ERROR_MESSAGES, TERMINAL_HEADLINES, askConfirm, backFromSub, cancelOrPause, challengeLevel, chaseBoard,
-  closeOverlay, colorDef, confirmYes, constraintText, currentStep, dismissToast, doHint, doRestart, doUndo, fmtScore, fmtTime, freshSeed,
+  closeOverlay, colorDef, confirmYes, constraintText, currentStep, doHint, doRestart, doUndo, fmtScore, fmtTime, freshSeed,
   goModes, goProgression, goTitle, journeyLevel, leaveRound, levelName, nextJourneyStage, notify, onPlay, openOverlay, openSetup, openSub,
   palette, pauseRound, playSubLabel, progression, refreshChase, replayLevel, resumeRound, skipPour, startChase, startDaily,
   startLesson, startLevel, startPractice, todayKey, toast, topOverlay, totalJourneyStars, type ModeKind,
@@ -39,14 +39,12 @@ import { DANGER, INK, INK_DIM, OK, PANEL_BORDER, currentPalette, mix } from "./s
 // ------------------------------------------------------------------ layout
 interface Layout { lw: number; lh: number; sc: number; ox: number; oy: number; wide: boolean; compact: boolean; phone: boolean; shortLand: boolean; vw: number; vh: number }
 function layoutNow(): Layout {
-  const f = frame();
-  const sc = ui.preferences().scale;
-  const sa = f.safeArea;
-  const lw = Math.max(1, (f.width - sa.left - sa.right) / sc), lh = Math.max(1, (f.height - sa.top - sa.bottom) / sc);
+  const v = ui.viewport!();
+  const sc = v.scale, lw = Math.max(1, v.width), lh = Math.max(1, v.height);
   const shortLand = lw > lh && lh <= 500;
   const wide = !shortLand && lw >= 1024;
   const phone = !shortLand && lw <= 700;
-  return { lw, lh, sc, ox: sa.left / sc, oy: sa.top / sc, wide, compact: !wide && !phone && !shortLand, phone, shortLand, vw: lw / 100, vh: lh / 100 };
+  return { lw, lh, sc, ox: v.x, oy: v.y, wide, compact: !wide && !phone && !shortLand, phone, shortLand, vw: lw / 100, vh: lh / 100 };
 }
 const lastHeight = new Map<string, number>();
 
@@ -157,7 +155,6 @@ export function drawScreens(): void {
   overlays(L);
   countdown(L);
   resolvingPill(L);
-  toasts(L, playing);
   errorBanner(L);
   // a screen that just opened focuses its first control once laid out
   if (app.focusNext) {
@@ -236,8 +233,8 @@ function profileChip(L: Layout): void {
   const maxW = Math.min(L.phone ? 180 : 260, L.lw * 0.45);
   if (ui.style("chip", { text: { overflow: "ellipsis" }, width: Math.min(maxW, buttonWidth(text, ["chip"]) + 16) }).id("btn-profile").button(label, { content: () => ui.style({ text: { overflow: "ellipsis" } }).label(text) })) {
     audio.play("ui");
-    if (platform.signedIn()) notify(() => tr("Signed in as {name}.", { name: platform.displayName() }));
-    else void requestSignIn().catch(() => notify(() => tr("Sign-in is unavailable right now — playing as guest. Progress stays on this device.")));
+    if (platform.signedIn()) notify(tr("Signed in as {name}.", { name: platform.displayName() }));
+    else void requestSignIn().catch(() => notify(tr("Sign-in is unavailable right now — playing as guest. Progress stays on this device.")));
   }
 }
 
@@ -502,14 +499,14 @@ function titleScreen(L: Layout): void {
       { id: "btn-title-modes", text: tr("All modes"), style: ["btn", "btn-ghost"], act: goModes },
     ];
     const link = platform.inviteLink();
-    if (link) nav.push({ id: "btn-title-invite", text: pt("invite"), style: ["btn", "btn-ghost"], act: () => {
+    if (link) nav.push({ id: "btn-title-invite", text: tr("starhermit.invite"), style: ["btn", "btn-ghost"], act: () => {
       audio.play("ui");
-      try { clipboard.writeText(link); notify(() => pt("inviteCopied")); } catch { notify(() => pt("inviteFailed")); }
+      try { clipboard.writeText(link); notify(tr("starhermit.inviteCopied")); } catch { notify(tr("starhermit.inviteFailed")); }
     } });
-    if (!platform.signedIn()) nav.push({ id: "btn-title-signin", text: pt("signIn"), style: ["btn", "btn-primary"], act: () => { void requestSignIn().catch(() => undefined); } });
+    if (!platform.signedIn()) nav.push({ id: "btn-title-signin", text: tr("starhermit.signIn"), style: ["btn", "btn-primary"], act: () => { void requestSignIn().catch(() => undefined); } });
     flow("title-nav", nav, w, "center");
-    if (platform.signedIn()) para(pt("signedInAs", { name: platform.displayName() }), w, "dim", "title-signed-in", true);
-    else if (app.signedOut) para(pt("signedOut"), w, "dim", "title-signed-out", true);
+    if (platform.signedIn()) para(tr("starhermit.signedInAs", { name: platform.displayName() }), w, "dim", "title-signed-in", true);
+    else if (app.signedOut) para(tr("starhermit.signedOut"), w, "dim", "title-signed-out", true);
   }, "center");
 }
 
@@ -741,7 +738,7 @@ function resultsScreen(L: Layout): void {
     }
     if (v.lb) {
       const lb = v.lb;
-      para(lb.pending ? pt("lbPosting") : !lb.posted ? pt("lbNotPosted") : lb.rank ? pt("lbRank", { rank: lb.rank }) : pt("lbPosted"), w, lb.posted || lb.pending ? "ranked-note" : "card-dim", "results-lb");
+      para(tr(lb.pending ? "starhermit.leaderboardPosting" : !lb.posted ? "starhermit.leaderboardNotPosted" : lb.rank ? "starhermit.leaderboardRank" : "starhermit.leaderboardPosted", lb.rank ? { rank: lb.rank } : null), w, lb.posted || lb.pending ? "ranked-note" : "card-dim", "results-lb");
     }
     if (v.bestBefore != null) {
       const prev = v.bestBefore.score ?? 0;
@@ -890,7 +887,7 @@ function exportSave(): void {
   try {
     const text = M.exportText(settings, progression(), new Date(platform.nowMs()).toISOString());
     files.saveAs("chromatic-pour-save.json", text, { type: "application/json" }).then((name) => {
-      if (name) notify(() => tr("Save exported — keep the file somewhere safe."));
+      if (name) notify(tr("Save exported — keep the file somewhere safe."));
     }, () => { app.error = { key: "storage", until: frame().time + 8 }; });
   } catch { app.error = { key: "storage", until: frame().time + 8 }; }
 }
@@ -898,13 +895,13 @@ function importSave(): void {
   files.open({ accept: [".json"] }).then((file) => {
     if (!file) return;
     const data = M.importText(new TextDecoder().decode(file.bytes));
-    if (!data) { notify(() => tr("That save file failed its checksum — nothing was imported.")); return; }
+    if (!data) { notify(tr("That save file failed its checksum — nothing was imported.")); return; }
     askConfirm(N("Import save?"), N("This replaces the settings and progress stored on this device. Your current local save will be overwritten."), N("Import and replace"), () => {
       platform.importSettings(data.settings as Record<string, unknown>);
       if (data.progression) platform.replaceProgression(data.progression);
-      notify(() => tr("Save imported. The shelf remembers."));
+      notify(tr("Save imported. The shelf remembers."));
     });
-  }, () => notify(() => tr("That file could not be read as a Chromatic Pour save.")));
+  }, () => notify(tr("That file could not be read as a Chromatic Pour save.")));
 }
 function resetProgress(): void {
   askConfirm(N("Reset all progress?"), N("Stars, streaks, achievements and bests on this device will be erased."), N("Erase progress"), () => {
@@ -913,7 +910,7 @@ function resetProgress(): void {
       platform.clearBests();
       try { storage.clearLocalProgress(); } catch { /* best-effort */ }
       platform.setSetting("tutorialDone", false);
-      notify(() => tr("Progress erased. A blank ledger, a clean shelf."));
+      notify(tr("Progress erased. A blank ledger, a clean shelf."));
     });
   });
 }
@@ -1034,7 +1031,7 @@ function drawerOverlay(L: Layout, side: "left" | "right"): void {
   });
 }
 
-// ------------------------------------------------------------------ countdown, resolving, toasts, errors
+// ------------------------------------------------------------------ countdown, resolving, errors
 function countdown(L: Layout): void {
   const c = app.countdown;
   if (!c) return;
@@ -1054,19 +1051,6 @@ function resolvingPill(L: Layout): void {
   if (app.phase !== "resolving") return;
   void L;
   ui.place("resolving", { anchor: "bottom", y: 16 }, () => { ui.style("resolving").id("resolving").label(tr("Settling the shelf…")); });
-}
-function toasts(L: Layout, playing: boolean): void {
-  if (!app.toasts.length) return;
-  const w = Math.min(L.lw - 32, 480);
-  const y = playing && (L.phone || L.shortLand) ? 76 : 16;
-  ui.place("toasts", { anchor: "bottom", y }, () => {
-    for (const t of app.toasts) {
-      const text = t.text();
-      const cls = ["toast", ...(t.kind === "achievement" ? ["toast-achievement"] : t.kind === "hint" ? ["toast-hint"] : [])];
-      const fits = textWidth(text, cls) + 40 <= w;
-      if (ui.style(...cls).id(`toast-${t.id}`).button(text, fits ? {} : { content: () => ui.style({ text: { align: "center" } }).paragraph(text, w - 40) })) dismissToast(t.id);
-    }
-  }, { spacing: 8, align: "center", width: w });
 }
 function errorBanner(L: Layout): void {
   const e = app.error;

@@ -19,7 +19,7 @@
 // exactly. Cosmetic timings (the countdown, the pour, the settle before
 // results) count fixed steps too.
 import { frame, levelSettings, onFixedUpdate, onQuit, onRender, onResume, onStart, onSuspend, onUpdate, onPreferencesChange, preferences, setFixedRate, openMenu } from "starhermit:engine";
-import { isKeyDown, onAction } from "starhermit:input";
+import { onAction } from "starhermit:input";
 import * as ui from "starhermit:ui";
 import { onSessionEnded, onPlayerChange, requestSignIn } from "starhermit:platform";
 import * as rules from "../js/rules.js";
@@ -27,7 +27,7 @@ import { GameSession } from "../js/session.js";
 import * as content from "../js/content.js";
 import * as storage from "../js/storage.js";
 import * as audio from "./audio.ts";
-import { tr, N, pt, onLocaleChange } from "./i18n.ts";
+import { tr, N } from "./i18n.ts";
 import * as platform from "./platform.ts";
 import { lookFor } from "./quality.ts";
 import * as render from "./render.ts";
@@ -46,7 +46,6 @@ export type Phase = "menu" | "tutorial" | "countdown" | "active" | "paused" | "r
 export type OverlayName = "pause" | "confirm" | "drawer-left" | "drawer-right";
 type State = ReturnType<typeof rules.createGame>;
 type Result = ReturnType<GameSession["result"]>;
-export interface Toast { text: () => string; kind: "info" | "achievement" | "hint" | "warn"; until: number; id: number }
 export interface ConfirmView { title: string; body: string; confirm: string; run: () => void }
 export interface ResultsView {
   result: Result; stars: number; newAchievements: string[]; complete: boolean; reason: string | null;
@@ -84,7 +83,6 @@ export const app = {
   confirm: null as ConfirmView | null,
   setupKind: "journey" as ModeKind,
   results: null as ResultsView | null,
-  toasts: [] as Toast[],
   error: null as { key: string; until: number } | null,
   countdown: null as { labels: string[]; i: number; left: number; stepSteps: number; startedAt: number } | null,
   resolvingAt: -1,
@@ -111,7 +109,6 @@ export const settings = platform.settings;
 /** The session clock: fixed steps × 1000/60 ms. */
 let clockMs = 0;
 const now = (): number => frame().time;
-let toastSeq = 0;
 let suspendedAt = 0;
 
 // ------------------------------------------------------------------ helpers
@@ -146,13 +143,15 @@ function fmtAway(ms: number): string {
 export function announce(msg: string, assertive = false): void {
   if (msg) ui.announce(msg.slice(0, 500), { politeness: assertive ? "assertive" : "polite" });
 }
-/** A transient toast; `text` re-reads in the current language. */
-export function toast(text: () => string, kind: Toast["kind"] = "info"): void {
-  while (app.toasts.length >= 4) app.toasts.shift();
-  app.toasts.push({ text, kind, until: now() + 4.2, id: ++toastSeq });
+/** A transient toast; a press dismisses it. Over a round on a phone it stands clear of the action bar. */
+export function toast(text: string, kind: "info" | "achievement" | "hint" = "info", announced = false): void {
+  const v = ui.viewport!();
+  const shortLand = v.width > v.height && v.height <= 500;
+  const offset = app.screen === "play" && !!session && (shortLand || v.width <= 700) ? 60 : 0; // the old distance from the edge − the stack's 16
+  const style = ["toast", ...(kind === "achievement" ? ["toast-achievement"] : kind === "hint" ? ["toast-hint"] : [])];
+  ui.toast!(text, { duration: 4.2, style, announce: announced, offset });
 }
-export function notify(text: () => string): void { toast(text, "info"); announce(text()); }
-export function dismissToast(id: number): void { app.toasts = app.toasts.filter((t) => t.id !== id); }
+export function notify(text: string): void { toast(text, "info", true); }
 export function showError(key: string): void {
   app.error = { key, until: now() + 8 };
   announce(tr(ERROR_MESSAGES[key] || ERROR_MESSAGES.content!), true);
@@ -647,7 +646,7 @@ function denyTutorial(i: number, step: Lesson["steps"][number], prefix: string):
   showInvalidOnVessel(i, prefix);
   if (step.hintText) {
     announce(`${prefix} ${tr(step.hintText)}`, true);
-    toast(((k) => () => tr(k))(step.hintText), "hint");
+    toast(tr(step.hintText), "hint");
   }
 }
 function advanceTutorial(): void {
@@ -674,10 +673,10 @@ function advanceTutorial(): void {
   }
   // Lesson complete.
   platform.setSetting("tutorialDone", true);
-  toast(() => tr("Lesson complete — the shelf approves."), "achievement");
   announce(tr("Lesson complete."));
   round.tutorial = null;
   goTitle();
+  toast(tr("Lesson complete — the shelf approves."), "achievement"); // after goTitle: a toast stays where it was born
 }
 
 // ------------------------------------------------------------------ outcomes
@@ -819,7 +818,7 @@ onAction((e) => {
   // over the vessels here, as the browser build's focus keys did.
   const moves: Record<string, [number, number]> = { focus_next: [1, 0], focus_prev: [-1, 0], focus_up: [0, -1], focus_down: [0, 1] };
   const mv = moves[e.action];
-  const uiNav = e.source === "gamepad" || (e.source === "keyboard" && ARROWS.some((k) => isKeyDown(k)));
+  const uiNav = e.source === "gamepad" || (e.source === "keyboard" && ARROWS.includes(e.code ?? ""));
   if (mv) {
     const cur = focusedVessel();
     if (cur == null) { app.focusNext = board.vesselId(firstPlayableVessel()); return; }
@@ -828,7 +827,7 @@ onAction((e) => {
   }
   if (e.action === "confirm") {
     // Enter, Space and South press the focused widget themselves; a rebound key pours too.
-    const native = e.source === "gamepad" || (e.source === "keyboard" && ["Enter", "Space", "NumpadEnter"].some((k) => isKeyDown(k)));
+    const native = e.source === "gamepad" || (e.source === "keyboard" && ["Enter", "Space", "NumpadEnter"].includes(e.code ?? ""));
     const cur = focusedVessel();
     if (cur == null) app.focusNext = board.vesselId(firstPlayableVessel());
     else if (!native) onVessel(cur);
@@ -864,8 +863,7 @@ platform.onSettingsChange(() => {
   applyTheme(th);
   render.setTheme(th, palette().map((c) => c.hex));
 });
-onLocaleChange(() => { /* every string is read with tr() as it is drawn */ });
-onSessionEnded(() => { app.signedOut = true; notify(() => pt("signedOut")); });
+onSessionEnded(() => { app.signedOut = true; notify(tr("starhermit.signedOut")); });
 onPlayerChange((p) => { if (p) app.signedOut = false; });
 onSuspend(() => {
   suspendedAt = Date.now();
@@ -877,7 +875,7 @@ onResume(() => {
   const awayMs = suspendedAt ? Date.now() - suspendedAt : 0;
   suspendedAt = 0;
   if (app.phase !== "paused") { audio.setPaused(false); if (playing() || app.phase === "resolving") session?.resume(); }
-  if (awayMs >= 5000 && session) notify(() => tr("Welcome back to the shelf — away for {time}. The round clock was paused.", { time: fmtAway(awayMs) }));
+  if (awayMs >= 5000 && session) notify(tr("Welcome back to the shelf — away for {time}. The round clock was paused.", { time: fmtAway(awayMs) }));
 });
 onQuit(() => platform.flush());
 
@@ -919,7 +917,6 @@ onUpdate((dt) => {
   applyLook();
   audio.update();
   const t0 = now();
-  if (app.toasts.length && app.toasts[0]!.until < t0) app.toasts = app.toasts.filter((x) => x.until >= t0);
   if (app.error && t0 > app.error.until) app.error = null;
 });
 onRender(() => {

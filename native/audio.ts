@@ -12,15 +12,13 @@
 // the volumes, the mute and the voice limit): music → "music", effects and
 // ambience → "effects", the interface tick → "interface"; the old default
 // bus levels (music 70 %, effects 90 %, ambience 50 %) are folded into each
-// sound's gain. The music's notes and the ambience, which the browser build
-// made with oscillators and filtered noise, are rendered once into clips
-// (createClip) with the same envelopes; the ambience is a 20-second loop
-// whose ends cross-fade. The synthesized stand-ins it played while a sample
-// loaded are not ported (the engine's web runtime drops clip loads while a
-// synthesis graph changes: the arrow-exodus finding). The clips all load at
-// once in onStart; the rendered voices are made one a frame and the sound
+// sound's gain. The music's notes and the ambience are offline graphs rendered
+// once into clips with the same envelopes; the ambience is a 20-second loop
+// whose ends cross-fade. The synthesized stand-ins the browser build played
+// while a sample loaded are not ported. The clips load and the notes render at
+// once in onStart, a family's ambience when it is first asked for; the sound
 // starts once the mixer runs (in a browser after the first press).
-import { context, createClip, loadClip, play as playClip, type AudioClip, type Bus, type Sound } from "starhermit:audio";
+import { OfflineAudioContext, context, createClip, loadClip, play as playClip, type AudioClip, type Bus, type Sound } from "starhermit:audio";
 import { audioStream, hashSeed } from "../js/rng.js";
 
 const LEVEL = { music: 0.7, effects: 0.9, ambience: 0.5 };
@@ -35,6 +33,7 @@ export function loadSfx(): void {
   for (const name of EVENTS) {
     loadClip(`sfx/${name}.opus`).then((c) => { clips.set(name, c); }, (e: unknown) => console.warn(`sfx ${name}: ${String(e)}`));
   }
+  void renderVoices().catch((e: unknown) => console.warn(`audio: ${String(e)}`));
 }
 
 const rng = audioStream("chromatic-pour");
@@ -53,22 +52,19 @@ export function play(name: SoundName, pitch = 1): void {
 // -- rendered voices ------------------------------------------------------------------------
 const RATE = 22050;
 /** js/audio.js shot(): 0 → `peak` linearly over `attack`, then exponentially to 0.0001 at `dur`. */
-function env(t: number, peak: number, attack: number, dur: number): number {
-  if (t < 0 || t >= dur) return 0;
-  if (t < attack) return peak * (t / attack);
-  return peak * Math.pow(0.0001 / peak, (t - attack) / Math.max(1e-6, dur - attack));
-}
-function toneClip(freq: number, dur: number, peak: number, attack: number, freqEnd = freq): AudioClip {
-  const n = Math.round((dur + 0.05) * RATE);
-  const out = new Float32Array(n);
-  let ph = 0;
-  for (let i = 0; i < n; i++) {
-    const t = i / RATE;
-    const f = freqEnd === freq ? freq : freq * Math.pow(freqEnd / freq, Math.min(1, t / dur));
-    ph += (2 * Math.PI * f) / RATE;
-    out[i] = Math.sin(ph) * env(t, peak, attack, dur);
-  }
-  return createClip([out], RATE);
+async function renderTone(freq: number, dur: number, peak: number, attack: number, freqEnd = freq): Promise<AudioClip> {
+  const off = new OfflineAudioContext(1, Math.round((dur + 0.05) * RATE), RATE);
+  const osc = off.createOscillator();
+  osc.frequency.setValueAtTime(freq, 0);
+  if (freqEnd !== freq) osc.frequency.exponentialRampToValueAtTime(freqEnd, dur);
+  const g = off.createGain();
+  g.gain.setValueAtTime(0, 0);
+  g.gain.linearRampToValueAtTime(peak, attack);
+  g.gain.exponentialRampToValueAtTime(0.0001, dur);
+  osc.connect(g).connect(off.destination);
+  osc.start();
+  osc.stop(dur);
+  return createClip(await off.startRendering());
 }
 
 interface Family { base: number; type: "sine" | "triangle"; lfo: number; noiseHz: number; detune: number }
@@ -86,38 +82,44 @@ function familyFor(themeId: string): string {
   return FAMILIES[hashSeed(s) % FAMILIES.length]!;
 }
 /** js/audio.js buildAmbience(): the drones (gain 0.6 and 0.25, each breathing ±0.15 at its LFO) and the room tone (noise lowpassed at the family's frequency, 0.05), all at 0.1. */
-function ambienceClip(family: string): AudioClip {
+async function renderAmbience(family: string): Promise<AudioClip> {
   const def = FAMILY_DEFS[family]!;
   const rate = 11025;
   const len = 20, fade = 2;
-  const n = (len + fade) * rate;
-  const raw = new Float32Array(n);
+  const off = new OfflineAudioContext(1, (len + fade) * rate, rate);
+  const master = off.createGain();
+  master.gain.value = 0.1;
+  master.connect(off.destination);
   const r = musicRng.fork("amb:" + family);
-  const wave = (ph: number): number => (def.type === "sine" ? Math.sin(ph) : (2 / Math.PI) * Math.asin(Math.sin(ph)));
   for (const [mult, gain, lfoMul] of [[1, 0.6, 1], [1.5, 0.25, 1.7]] as const) {
-    const f = def.base * mult * Math.pow(2, ((r.next() - 0.5) * 2 * def.detune) / 1200);
-    const lf = def.lfo * lfoMul;
-    for (let i = 0; i < n; i++) {
-      const t = i / rate;
-      raw[i]! += wave(2 * Math.PI * f * t) * (gain + 0.15 * Math.sin(2 * Math.PI * lf * t));
-    }
+    const osc = off.createOscillator();
+    osc.type = def.type;
+    osc.frequency.value = def.base * mult * Math.pow(2, ((r.next() - 0.5) * 2 * def.detune) / 1200);
+    const g = off.createGain();
+    g.gain.value = gain;
+    const lfo = off.createOscillator();
+    lfo.frequency.value = def.lfo * lfoMul;
+    const depth = off.createGain();
+    depth.gain.value = 0.15;
+    lfo.connect(depth).connect(g.gain);
+    osc.connect(g).connect(master);
+    osc.start();
+    lfo.start();
   }
-  // RBJ biquad lowpass, Q 1, over white noise
-  const w = (2 * Math.PI * Math.min(def.noiseHz, rate * 0.45)) / rate, alpha = Math.sin(w) / 2, c = Math.cos(w), a0 = 1 + alpha;
-  const b0 = (1 - c) / 2 / a0, b1 = (1 - c) / a0, b2 = b0, a1 = (-2 * c) / a0, a2 = (1 - alpha) / a0;
-  let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
-  const nr = r.fork("noise");
-  for (let i = 0; i < n; i++) {
-    const x0 = nr.next() * 2 - 1;
-    const y0 = b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
-    x2 = x1; x1 = x0; y2 = y1; y1 = y0;
-    raw[i]! += y0 * 0.05;
-  }
+  const noise = off.createNoise({ seed: hashSeed(family), seconds: len + fade });
+  const lp = off.createBiquadFilter();
+  lp.type = "lowpass";
+  lp.frequency.value = Math.min(def.noiseHz, rate * 0.45);
+  const room = off.createGain();
+  room.gain.value = 0.05;
+  noise.connect(lp).connect(room).connect(master);
+  noise.start();
+  const raw = (await off.startRendering()).getChannelData(0);
   const out = new Float32Array(len * rate);
   for (let i = 0; i < out.length; i++) {
     let v = raw[i]!;
     if (i < fade * rate) { const k = i / (fade * rate); v = v * k + raw[len * rate + i]! * (1 - k); }
-    out[i] = v * 0.1;
+    out[i] = v;
   }
   return createClip([out], rate);
 }
@@ -126,13 +128,17 @@ const melody = new Map<number, AudioClip>();
 const harmony = new Map<number, AudioClip>();
 let pulse: AudioClip | null = null;
 const ambClips = new Map<string, AudioClip>();
-/** One rendered voice a frame, once the samples are in; false when all are made. */
-function renderNext(): boolean {
-  for (let i = 0; i < SCALE.length; i++) if (!melody.has(i)) { melody.set(i, toneClip(SCALE[i]!, 1.4, 0.05, 0.02)); return true; }
-  for (let i = 0; i < SCALE.length; i++) if (!harmony.has(i)) { harmony.set(i, toneClip(SCALE[i]! * 1.5, 1.2, 0.03, 0.05)); return true; }
-  if (!pulse) { pulse = toneClip(110, 0.18, 0.06, 0.002, 70); return true; }
-  if (ambFamily && !ambClips.has(ambFamily)) { ambClips.set(ambFamily, ambienceClip(ambFamily)); return true; }
-  return false;
+const ambRendering = new Set<string>();
+/** Every note, one graph at a time; the pulse last, as update() waits on it. */
+async function renderVoices(): Promise<void> {
+  for (let i = 0; i < SCALE.length; i++) melody.set(i, await renderTone(SCALE[i]!, 1.4, 0.05, 0.02));
+  for (let i = 0; i < SCALE.length; i++) harmony.set(i, await renderTone(SCALE[i]! * 1.5, 1.2, 0.03, 0.05));
+  pulse = await renderTone(110, 0.18, 0.06, 0.002, 70);
+}
+function renderFamily(family: string): void {
+  if (ambClips.has(family) || ambRendering.has(family)) return;
+  ambRendering.add(family);
+  renderAmbience(family).then((c) => { ambClips.set(family, c); }, (e: unknown) => console.warn(`audio: ${String(e)}`));
 }
 
 // -- music and ambience -------------------------------------------------------------------
@@ -146,7 +152,7 @@ let paused = false;
 
 /** 0–1: the shelf's completion; layers fade in with it. */
 export function setMusicIntensity(v: number): void { intensity = Math.max(0, Math.min(1, Number(v) || 0)); }
-export function startAmbience(themeId: string): void { ambFamily = familyFor(themeId); }
+export function startAmbience(themeId: string): void { ambFamily = familyFor(themeId); renderFamily(ambFamily); }
 export function stopAmbience(): void {
   ambFamily = null;
   fadeOutAmbience(1.2);
@@ -166,11 +172,9 @@ function voice(clip: AudioClip | undefined, bus: Bus, gain: number): void {
   try { playClip(clip, { bus, gain }); } catch { /* the mixer is full */ }
 }
 
-/** Each frame once the mixer runs: one rendered voice a frame,
- * then the music's steps and the ambience's loop by mixer time. */
+/** Each frame once the mixer runs and the notes are rendered: the music's steps and the ambience's loop by mixer time. */
 export function update(): void {
-  if (context.state !== "running") return;
-  try { if (renderNext()) return; } catch (e) { console.warn(`audio: ${String(e)}`); return; }
+  if (context.state !== "running" || !pulse) return;
   const now = context.currentTime;
   // ambience (a family change cross-fades)
   if (ambFamily !== ambPlaying) {
@@ -190,7 +194,7 @@ export function update(): void {
     voice(melody.get(i), "music", LEVEL.music);
     if (intensity >= 0.35) voice(harmony.get(i), "music", LEVEL.music * Math.min(1, intensity + 0.3));
   }
-  if (intensity >= 0.7 && step % 4 === 0) voice(pulse ?? undefined, "music", LEVEL.music);
+  if (intensity >= 0.7 && step % 4 === 0) voice(pulse, "music", LEVEL.music);
   nextStep += 0.5;
   step++;
 }
