@@ -1,3 +1,5 @@
+import { openLocalizedOptions as openMenu } from "./l10n/menu.ts";
+import { withLanguageRender as __l10nRender } from "./l10n/menu.ts";
 // Chromatic Pour on the StarHermit engine: the entry module (starhermit.txt
 // engine.entry), played natively by the StarHermit client and in browsers by
 // the engine's web runtime. The rules, content, session and store are the
@@ -18,7 +20,7 @@
 // a hidden window and slow frames never cost time, and play scripts replay
 // exactly. Cosmetic timings (the countdown, the pour, the settle before
 // results) count fixed steps too.
-import { frame, levelSettings, onFixedUpdate, onQuit, onRender, onResume, onStart, onSuspend, onUpdate, onPreferencesChange, preferences, setFixedRate, openMenu } from "starhermit:engine";
+import { frame, levelSettings, onFixedUpdate, onQuit, onRender, onResume, onStart, onSuspend, onUpdate, onPreferencesChange, preferences, setFixedRate } from "starhermit:engine";
 import { onAction } from "starhermit:input";
 import * as ui from "starhermit:ui";
 import { onSessionEnded, onPlayerChange, requestSignIn } from "starhermit:platform";
@@ -919,11 +921,15 @@ onUpdate((dt) => {
   const t0 = now();
   if (app.error && t0 > app.error.until) app.error = null;
 });
-onRender(() => {
+onRender(__l10nRender(() => {
   drawScreens();
   render.update(frameDt);
-});
+}));
 
 // Re-exports for screens.ts (the runtime's menu and sign-in).
 export { openMenu, requestSignIn, storage, content, rules };
 export type { State };
+
+// localization-runtime:menu
+import { installLanguageMenu as __installLanguageMenu } from "./l10n/menu.ts";
+__installLanguageMenu(false);

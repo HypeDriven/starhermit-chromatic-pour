@@ -1,3 +1,6 @@
+import { localizedDrawOptions as __l10nDrawOptions } from "./l10n/font.ts";
+// localization-runtime:attached
+import { localizedFont as __l10nFont } from "./l10n/font.ts";
 // The shelf's vessels as the browser build's DOM board drew them (js/ui.js
 // renderBoard, css/style.css .vessel / .vessel-tube / .layer): a row of
 // glass tubes (wrapping as the flex row did, centred, bottoms aligned) over
@@ -214,7 +217,7 @@ function drawVessel(r: ui.Rect, st: ui.WidgetState, i: number, layers: number[],
       drawShape(color % 10, cx, cy, size, (tf.deg * Math.PI) / 180, SHAPE_INK);
       if (settings.labelsOnLiquids && !tf.deg) {
         const fs = 8.8 * k * (ui.preferences().textScale ?? 1);
-        draw.text(def.name, ix + iw * 0.04, y + (h - fs * 1.2) / 2, { size: fs, color: LABEL_INK, font: "sans-serif", clip: { x: ix, y, width: iw * 0.96, height: h } });
+        draw.text(def.name, ix + iw * 0.04, y + (h - fs * 1.2) / 2, __l10nDrawOptions({ size: fs, color: LABEL_INK, font: __l10nFont("sans-serif"), clip: { x: ix, y, width: iw * 0.96, height: h } }));
       }
     }
   }
@@ -238,7 +241,7 @@ function drawVessel(r: ui.Rect, st: ui.WidgetState, i: number, layers: number[],
   }
   // the vessel's number under the tube
   const fsn = 11.2 * k * (ui.preferences().textScale ?? 1);
-  draw.text(String(i + 1), r.x + r.width / 2, ty0 + tubeH + 5.6 * k, { size: fsn, color: INK_DIM, font: "sans-serif", align: "center" });
+  draw.text(String(i + 1), r.x + r.width / 2, ty0 + tubeH + 5.6 * k, __l10nDrawOptions({ size: fsn, color: INK_DIM, font: __l10nFont("sans-serif"), align: "center" }));
 }
 
 // --- the board -------------------------------------------------------------------------------

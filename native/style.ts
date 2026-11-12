@@ -1,3 +1,5 @@
+// localization-runtime:attached
+import { localizedFont as __l10nFont, setLocalizedDefaultFont as __l10nSetFont, setLocalizedStyles as __l10nStyles } from "./l10n/font.ts";
 // The look of the menus, HUD and board: the browser build's style sheet,
 // rewritten class-based in tools/ui-style.css and converted once with
 // `starhermit css` into assets/ui-style.json (`npm run css`), registered at
@@ -66,7 +68,7 @@ function tokensFor(p: Palette): Record<string, string> {
 
 export function initStyles(): void {
   const css = files.readJson("assets/ui-style.json") as unknown as ui.CssStyles;
-  ui.setFont({ family: "serif" });
+  __l10nSetFont({ family: "serif" });
   ui.setTheme({
     fontSize: 16, smallSize: 13.6, headingSize: 24, padding: 8, spacing: 8, radius: 14,
     text: INK, muted: INK_DIM, panel: "#211a14", control: "#29201a", hovered: "#33281f",
@@ -74,18 +76,18 @@ export function initStyles(): void {
   });
   ui.setTokens(css.tokens);
   ui.setAnimations(css.animations);
-  ui.setStyles({
+  __l10nStyles({
     ...css.styles,
     label: { text: { color: INK } },
     paragraph: { text: { color: INK } },
     heading: { text: { color: INK } },
     widget: { focusRing: { color: FOCUS, width: 3, offset: 2 } },
     checkbox: {
-      text: { color: INK, font: "serif" }, minHeight: 44,
+      text: { color: INK, font: __l10nFont("serif") }, minHeight: 44,
       parts: { box: { background: "#0000004d", border: { width: 1, color: "#ece2cf66" }, radius: 4 }, mark: { background: "$accent" } },
     },
-    select: { text: { color: INK, font: "sans-serif" }, background: "#0000004d", border: { width: 1, color: PANEL_BORDER }, radius: 10, minHeight: 44 },
-    textField: { text: { color: INK, font: "sans-serif" }, background: "#0000004d", border: { width: 1, color: PANEL_BORDER }, radius: 10, minHeight: 44, padding: { start: 12, end: 12 } },
+    select: { text: { color: INK, font: __l10nFont("sans-serif") }, background: "#0000004d", border: { width: 1, color: PANEL_BORDER }, radius: 10, minHeight: 44 },
+    textField: { text: { color: INK, font: __l10nFont("sans-serif") }, background: "#0000004d", border: { width: 1, color: PANEL_BORDER }, radius: 10, minHeight: 44, padding: { start: 12, end: 12 } },
     dialog: {
       background: "#211a14", radius: 14, padding: 20, border: { width: 1, color: PANEL_BORDER }, shadow: { y: 12, blur: 40, color: "#00000080" },
       parts: { backdrop: { background: "#0a0806a8" } },

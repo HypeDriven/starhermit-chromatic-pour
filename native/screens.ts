@@ -1,3 +1,7 @@
+import { localizedStyle as __l10nStyle } from "./l10n/font.ts";
+// localization-runtime:attached
+import { localizedFont as __l10nFont } from "./l10n/font.ts";
+import { openLocalizedOptions as __l10nOptions } from "./l10n/menu.ts";
 // The browser build's DOM shell (js/ui.js + css/style.css) as starhermit:ui,
 // built every frame: the page background (the theme's fog over its dark
 // base), the top bar (the brand, the play screen's Objective and Actions
@@ -13,7 +17,22 @@
 // the action tray) and short landscape (≤ 500 px tall: the Working rail
 // beside the playfield, the strip and the tray). The shelf (render.ts) is
 // framed into the playfield.
-import { frame, files, openMenu, clipboard } from "starhermit:engine";
+// The browser build's DOM shell (js/ui.js + css/style.css) as starhermit:ui,
+// built every frame: the page background (the theme's fog over its dark
+// base), the top bar (the brand, the play screen's Objective and Actions
+// drawer toggles, the profile chip), the play layout (the Working rail, the
+// playfield with the shelf and the vessels, the Actions rail with the clock
+// and moves; the status strip and the action tray on small screens), the
+// lesson card, the countdown, the toasts, the error banner, and the screens
+// (title with its key art, modes, the six setups, results, how to pour,
+// settings, the ledger) and overlays (pause, confirm, drawers). The
+// browser's media queries are layouts picked by the window's logical size:
+// wide (≥ 1024 px: both rails docked), compact (701–1023: the rails are
+// drawers behind the top bar's toggles), phone (≤ 700: the status strip and
+// the action tray) and short landscape (≤ 500 px tall: the Working rail
+// beside the playfield, the strip and the tray). The shelf (render.ts) is
+// framed into the playfield.
+import { frame, files, clipboard } from "starhermit:engine";
 import { bindings, onPointerButton, onPointerMove, onTouch } from "starhermit:input";
 import * as draw from "starhermit:draw";
 import * as ui from "starhermit:ui";
@@ -65,9 +84,9 @@ function button(b: Btn, width: number | null = null): boolean {
   if (b.content) opts.content = b.content;
   else if (width != null && buttonWidth(b.text, style) > width) {
     const inner = width - 36;
-    opts.content = () => { ui.style({ text: { align: "center" } }).paragraph(b.text, inner); };
+    opts.content = () => { ui.style(__l10nStyle({ text: { align: "center" } })).paragraph(b.text, inner); };
   }
-  if (ui.style(...style, s).id(b.id).button(b.text, opts)) { b.act(); return true; }
+  if (ui.style(...__l10nStyle(style), __l10nStyle(s)).id(b.id).button(b.text, opts)) { b.act(); return true; }
   return false;
 }
 /** Buttons at their own widths in rows that wrap at `width` (CSS flex-wrap). */
@@ -85,14 +104,14 @@ function para(text: string, width: number, cls: string | readonly (string | ui.S
   if (!text) return;
   const styles: (string | ui.Style)[] = typeof cls === "string" ? [cls] : [...cls];
   if (center) styles.push({ text: { align: "center" } });
-  let u = ui.style(...styles);
+  let u = ui.style(...__l10nStyle(styles));
   if (id) u = u.id(id);
   if (ui.measureText(text, { style: styles }).width / ui.preferences().scale <= width) u.label(text);
   else u.paragraph(text, width);
 }
 function heading(cls: "h1" | "h2" | "h3" | "results-h1" | "settings-h2", text: string, width: number, id?: string): void {
   if (ui.measureText(text, { kind: "heading", style: cls }).width / ui.preferences().scale <= width) (id ? ui.id(id) : ui).style(cls).heading(text);
-  else ui.style(cls).paragraph(text, width);
+  else ui.style(__l10nStyle(cls)).paragraph(text, width);
 }
 /** A grid of cards (CSS repeat(auto-fit, minmax(min, 1fr))) built by `cell(i, width)`. */
 function cardGrid(label: string, count: number, width: number, min: number, gap: number, cell: (i: number, w: number) => void): void {
@@ -199,11 +218,11 @@ function topbar(L: Layout, playing: boolean): void {
   const r = ui.place("topbar", "top-start", () => {
     ui.row("topbar-row", () => {
       if (drawers) {
-        if (ui.style("icon-btn").id("btn-drawer-left").button(tr("Toggle objective panel"), { content: () => menuGlyph() })) openOverlay("drawer-left");
+        if (ui.style(__l10nStyle("icon-btn")).id("btn-drawer-left").button(tr("Toggle objective panel"), { content: () => menuGlyph() })) openOverlay("drawer-left");
       }
-      ui.column("brand-col", () => { ui.style("brand").label("Chromatic Pour"); }, { grow: 1, align: "start" });
+      ui.column("brand-col", () => { ui.style(__l10nStyle("brand")).label("Chromatic Pour"); }, { grow: 1, align: "start" });
       if (drawers) {
-        if (ui.style("icon-btn").id("btn-drawer-right").button(tr("Toggle actions panel"), { content: () => flaskGlyph() })) openOverlay("drawer-right");
+        if (ui.style(__l10nStyle("icon-btn")).id("btn-drawer-right").button(tr("Toggle actions panel"), { content: () => flaskGlyph() })) openOverlay("drawer-right");
       }
       profileChip(L);
     }, { width: L.lw - 24, height: 44, spacing: 8, align: "center" });
@@ -231,7 +250,7 @@ function profileChip(L: Layout): void {
   const text = name || tr("Guest — sign in");
   const label = name ? tr("Signed in as {name}. Account options", { name }) : tr("Playing as guest. Sign in");
   const maxW = Math.min(L.phone ? 180 : 260, L.lw * 0.45);
-  if (ui.style("chip", { text: { overflow: "ellipsis" }, width: Math.min(maxW, buttonWidth(text, ["chip"]) + 16) }).id("btn-profile").button(label, { content: () => ui.style({ text: { overflow: "ellipsis" } }).label(text) })) {
+  if (ui.style(__l10nStyle("chip"), __l10nStyle({ text: { overflow: "ellipsis" }, width: Math.min(maxW, buttonWidth(text, ["chip"]) + 16) })).id("btn-profile").button(label, { content: () => ui.style(__l10nStyle({ text: { overflow: "ellipsis" } })).label(text) })) {
     audio.play("ui");
     if (platform.signedIn()) notify(tr("Signed in as {name}.", { name: platform.displayName() }));
     else void requestSignIn().catch(() => notify(tr("Sign-in is unavailable right now — playing as guest. Progress stays on this device.")));
@@ -277,32 +296,32 @@ function actions(): Action[] {
 }
 function railLeft(w: number): void {
   const h = hud();
-  ui.style("rail-title").label(upper(tr("Working")));
+  ui.style(__l10nStyle("rail-title")).label(upper(tr("Working")));
   para(h.objective, w, "objective", "hud-objective");
   para(h.progress, w, "progress", "hud-progress");
-  if (h.limit) ui.style(h.limitDanger ? "limit-danger" : "limit-badge").id("hud-limit").label(h.limit);
+  if (h.limit) ui.style(__l10nStyle(h.limitDanger ? "limit-danger" : "limit-badge")).id("hud-limit").label(h.limit);
   para(levelName(round.level), w, "levelname", "hud-level");
 }
 function railRight(w: number): void {
   const h = hud();
-  ui.style("rail-title").label(upper(tr("Actions")));
+  ui.style(__l10nStyle("rail-title")).label(upper(tr("Actions")));
   ui.column("rail-actions", () => {
     for (const a of actions()) button({ id: a.id, text: a.text, style: ["btn", "btn-ghost"], disabled: !a.enabled, act: () => { ui.setFocus(null); a.act(); } }, w);
   }, { spacing: 9.6, width: w });
   ui.row("rail-status", () => {
-    ui.style(h.danger ? "timer-danger" : "timer").id("hud-timer").label(h.timer);
+    ui.style(__l10nStyle(h.danger ? "timer-danger" : "timer")).id("hud-timer").label(h.timer);
     ui.spacer();
-    ui.style("moves").id("hud-moves").label(h.moves);
+    ui.style(__l10nStyle("moves")).id("hud-moves").label(h.moves);
   }, { style: "rail-status", width: w, align: "center" });
 }
 function statusStrip(L: Layout, w: number): void {
   const h = hud();
   ui.row("strip", () => {
-    ui.style("strip-objective").id("strip-objective").label(h.strip);
+    ui.style(__l10nStyle("strip-objective")).id("strip-objective").label(h.strip);
     ui.spacer();
-    ui.style("strip-item").id("strip-moves").label(h.moves);
-    ui.style(h.danger ? "strip-danger" : "strip-item").id("strip-timer").label(h.timer);
-    if (h.limit) ui.style(h.limitDanger ? "strip-danger" : "strip-item").id("strip-limit").label(h.limit);
+    ui.style(__l10nStyle("strip-item")).id("strip-moves").label(h.moves);
+    ui.style(__l10nStyle(h.danger ? "strip-danger" : "strip-item")).id("strip-timer").label(h.timer);
+    if (h.limit) ui.style(__l10nStyle(h.limitDanger ? "strip-danger" : "strip-item")).id("strip-limit").label(h.limit);
   }, { style: "strip", width: w, spacing: L.shortLand ? 12.8 : 14.4, align: "center" });
 }
 function tray(L: Layout): number {
@@ -436,12 +455,12 @@ function dailyCountdown(): string {
 /** The key art (object-fit: cover, rounded, framed; its foot fading into the page as the CSS mask did). */
 function art(path: string, w: number, h: number, id: string, fade: boolean): void {
   const pal = currentPalette();
-  ui.style({
+  ui.style(__l10nStyle({
     width: w, height: h, radius: 14, border: { width: 1, color: PANEL_BORDER },
     background: [{ image: path, size: "cover" }, "#1c1611"],
     shadow: fade ? [{ y: 12, blur: 40, color: "#00000073" }, { blur: 48, color: pal.accentSoft }] : { y: 10, blur: 30, color: "#00000066" },
     decorations: fade ? [{ fill: { type: "linear", angle: 180, stops: [{ color: mix(pal.bg, 0, "transparent"), at: 0 }, pal.bg] }, start: 0, end: 0, bottom: 0, height: h * 0.3, over: true }] : [],
-  }).id(id).column(`${id}-box`, () => undefined, { width: w, height: h });
+  })).id(id).column(`${id}-box`, () => undefined, { width: w, height: h });
 }
 
 function titleScreen(L: Layout): void {
@@ -453,8 +472,8 @@ function titleScreen(L: Layout): void {
     art("assets/title-art.webp", artW, artH, "title-art", true);
     const wm = L.shortLand ? 38.4 : Math.max(41.6, Math.min(L.vw * 9, 80));
     ui.row("wordmark", () => {
-      ui.style("wordmark-a", { text: { size: wm } }).label("Chromatic");
-      ui.style("wordmark-b", { text: { size: wm } }).label("Pour");
+      ui.style(__l10nStyle("wordmark-a"), __l10nStyle({ text: { size: wm } })).label("Chromatic");
+      ui.style(__l10nStyle("wordmark-b"), __l10nStyle({ text: { size: wm } })).label("Pour");
     }, { align: "end" });
     para(tr("An alchemist’s sorting ritual. Pour every hue home."), w, "tagline", "tagline", true);
     const playW = Math.min(Math.max(320, buttonWidth(playSubLabel(), ["btn", "btn-primary", "btn-play"]) + 20), L.vw * 80 + 40, w);
@@ -462,7 +481,7 @@ function titleScreen(L: Layout): void {
       id: "btn-play", text: tr("Play"), style: ["btn", "btn-primary", "btn-play"],
       act: () => { audio.play("ui"); onPlay(); },
       content: () => ui.column("play-face", () => {
-        ui.style("play-label").label(upper(tr("Play")));
+        ui.style(__l10nStyle("play-label")).label(upper(tr("Play")));
         para(playSubLabel(), playW - 70, "play-sub", "play-sub", true);
       }, { align: "center", spacing: 2 }),
     }, playW);
@@ -471,13 +490,13 @@ function titleScreen(L: Layout): void {
     const next = nextJourneyStage(p);
     const cards: { id: string; label: string; act: () => void; face: (cw: number) => void }[] = [
       { id: "card-daily", label: tr("Daily draught"), act: () => openSetup("daily"), face: (cw) => {
-        ui.style("card-kicker").label(upper(tr("Daily draught")));
-        ui.style("card-title").label(todayKey());
+        ui.style(__l10nStyle("card-kicker")).label(upper(tr("Daily draught")));
+        ui.style(__l10nStyle("card-title")).label(todayKey());
         para(dailyBest ? tr("Best score {score}", { score: fmtScore(dailyBest.score ?? 0) }) : tr("Not attempted yet"), cw, "card-line");
         para(dailyCountdown(), cw, "card-countdown", "daily-countdown");
       } },
       { id: "card-journey", label: tr("Journey"), act: () => openSetup("journey"), face: (cw) => {
-        ui.style("card-kicker").label(upper(tr("Journey")));
+        ui.style(__l10nStyle("card-kicker")).label(upper(tr("Journey")));
         para(tr("{n} / {total} stars", { n: totalJourneyStars(p), total: content.JOURNEY.length * 3 }), cw, "card-title");
         para(next ? tr("Next: {name}", { name: levelName(next) }) : tr("The whole shelf glows. Mastery awaits."), cw, "card-line");
       } },
@@ -488,7 +507,7 @@ function titleScreen(L: Layout): void {
     cardGrid("title-cards", cards.length, w, 208, 14.4, (i, cw) => {
       const c = cards[i]!;
       const small = i >= 2;
-      if (ui.style("card", ...(small ? ["card-small"] : []), { width: cw }).id(c.id).button(c.label, {
+      if (ui.style(__l10nStyle("card"), ...__l10nStyle((small ? ["card-small"] : [])), __l10nStyle({ width: cw })).id(c.id).button(c.label, {
         content: () => ui.column(`${c.id}-face`, () => c.face(cw - 36), { spacing: 4.8, width: cw - 36, align: small ? "center" : "start", justify: "center" }),
       })) { audio.play("ui"); c.act(); }
     });
@@ -519,7 +538,7 @@ const MODE_CARDS: { kind: ModeKind; name: string; rules: string; duration: strin
   { kind: "score-chase", name: N("Score chase"), rules: N("One board, endless rivalry. Climb the global or friends ladder."), duration: N("~3 minutes"), ranked: true, assists: N("Assists allowed, recorded") },
 ];
 function badge(ranked: boolean, text: string): void {
-  ui.style("badge", ...(ranked ? ["badge-ranked"] : [])).label(upper(text));
+  ui.style(__l10nStyle("badge"), ...__l10nStyle((ranked ? ["badge-ranked"] : []))).label(upper(text));
 }
 function modesScreen(L: Layout): void {
   screen("modes", L, 1152, (w) => {
@@ -528,9 +547,9 @@ function modesScreen(L: Layout): void {
     cardGrid("mode-grid", MODE_CARDS.length, w, 256, 14.4, (i, cw) => {
       const m = MODE_CARDS[i]!;
       const ci = cw - 36;
-      if (ui.style("card", { width: cw, minHeight: 136 }).id(`mode-${m.kind === "score-chase" ? "chase" : m.kind}`).button(tr(m.name), {
+      if (ui.style(__l10nStyle("card"), __l10nStyle({ width: cw, minHeight: 136 })).id(`mode-${m.kind === "score-chase" ? "chase" : m.kind}`).button(tr(m.name), {
         content: () => ui.column(`mode-${m.kind}-face`, () => {
-          ui.style("card-title").label(tr(m.name));
+          ui.style(__l10nStyle("card-title")).label(tr(m.name));
           badge(m.ranked, m.ranked ? tr("Ranked") : tr("Unranked"));
           para(tr(m.rules), ci, "card-line");
           para(`${tr(m.duration)} · ${tr(m.assists)}`, ci, "card-dim");
@@ -581,11 +600,11 @@ function setupJourney(w: number): void {
           const n = rec ? rec.stars || 0 : 0;
           const label = locked ? tr("Stage {n}, locked", { n: j + 1 })
             : tr(e.mastery ? "Stage {n}, {name}, mastery, {stars} of 3 stars" : "Stage {n}, {name}, {stars} of 3 stars", { n: j + 1, name: levelName(e), stars: n });
-          if (ui.style(e.mastery ? "stage-mastery" : "stage-cell", { width: cw }).id(`stage-${j}`).button(label, {
+          if (ui.style(__l10nStyle(e.mastery ? "stage-mastery" : "stage-cell"), __l10nStyle({ width: cw })).id(`stage-${j}`).button(label, {
             disabled: locked,
             content: () => ui.stack(`stage-${j}-face`, () => {
               ui.column(`stage-${j}-col`, () => {
-                ui.style("stage-num").label(String(j + 1));
+                ui.style(__l10nStyle("stage-num")).label(String(j + 1));
                 stars(n, 10.4, accent);
               }, { align: "center", spacing: 2.4, width: cw - 10, justify: "center" });
               if (e.mastery) ui.column(`stage-${j}-m`, () => diamond(10, accent), { align: "end", width: cw - 14 });
@@ -603,10 +622,10 @@ function setupPractice(w: number): void {
   cardGrid("diff-grid", diffs.length, w, 208, 14.4, (i, cw) => {
     const d = diffs[i]!;
     const chosen = d.id === app.practiceDifficulty;
-    if (ui.style("card", { width: cw }).id(`diff-${d.id}`).button(tr(d.label || d.id), {
+    if (ui.style(__l10nStyle("card"), __l10nStyle({ width: cw })).id(`diff-${d.id}`).button(tr(d.label || d.id), {
       selected: chosen,
       content: () => ui.column(`diff-${d.id}-face`, () => {
-        ui.style("card-title").label(tr(d.label || d.id));
+        ui.style(__l10nStyle("card-title")).label(tr(d.label || d.id));
         para(tr("{colors} colors · {empty} empty vessels", { colors: d.colorCount, empty: d.emptyVessels }), cw - 36, "card-line");
         if (d.desc) para(tr(d.desc), cw - 36, "card-dim");
       }, { spacing: 4.8, width: cw - 36 }),
@@ -615,7 +634,7 @@ function setupPractice(w: number): void {
   if (seedDraft === null) seedDraft = app.practiceSeed;
   ui.row("seed-row", () => {
     ui.column("seed-col", () => {
-      ui.style("dim", { text: { font: "sans-serif", size: 13.6 } }).label(tr("Seed"));
+      ui.style(__l10nStyle("dim"), __l10nStyle({ text: { font: __l10nFont("sans-serif"), size: 13.6 } })).label(tr("Seed"));
       seedDraft = ui.textField("practice-seed", seedDraft ?? "", { maxChars: 48, width: Math.min(288, w - 120), placeholder: tr("Practice seed") });
       app.practiceSeed = (seedDraft ?? "").trim() || app.practiceSeed;
     }, { spacing: 4.8 });
@@ -627,9 +646,9 @@ function setupChallenge(w: number): void {
   setupHeader(w, tr("Challenges"), tr("Constrained brews for exacting alchemists. Constraints are part of the leaderboard recipe."), true);
   cardGrid("challenge-grid", content.CHALLENGES.length, w, 256, 14.4, (i, cw) => {
     const c = content.CHALLENGES[i]!;
-    if (ui.style("card", { width: cw, minHeight: 136 }).id(`challenge-${c.id}`).button(tr(c.name), {
+    if (ui.style(__l10nStyle("card"), __l10nStyle({ width: cw, minHeight: 136 })).id(`challenge-${c.id}`).button(tr(c.name), {
       content: () => ui.column(`challenge-${c.id}-face`, () => {
-        ui.style("card-title").label(tr(c.name));
+        ui.style(__l10nStyle("card-title")).label(tr(c.name));
         if (c.desc) para(tr(c.desc), cw - 36, "card-line");
         para(constraintText(c.constraints), cw - 36, "card-dim");
       }, { spacing: 4.8, width: cw - 36 }),
@@ -676,9 +695,9 @@ function setupLearn(w: number): void {
   cardGrid("lesson-grid", content.LESSONS.length, w, 256, 14.4, (i, cw) => {
     const l = content.LESSONS[i]!;
     const title = l.title ? tr(l.title) : tr("Lesson {n}", { n: i + 1 });
-    if (ui.style("card", { width: cw, minHeight: 100 }).id(`lesson-${l.id}`).button(title, {
+    if (ui.style(__l10nStyle("card"), __l10nStyle({ width: cw, minHeight: 100 })).id(`lesson-${l.id}`).button(title, {
       content: () => ui.column(`lesson-${l.id}-face`, () => {
-        ui.style("card-title").label(title);
+        ui.style(__l10nStyle("card-title")).label(title);
         para(tr(l.steps.length === 1 ? "{n} step" : "{n} steps", { n: l.steps.length }), cw - 36, "card-line");
       }, { spacing: 4.8, width: cw - 36 }),
     })) startLesson(l);
@@ -694,9 +713,9 @@ function table(label: string, rows: string[][], w: number, header: boolean, tota
         row.forEach((cell, ci) => {
           const last = ci === row.length - 1;
           const cls = isHead || isTotal ? "th" : last ? (negRows.has(ri) ? "td-neg" : "td") : ci === 0 && !header ? "th" : "body";
-          if (last) { ui.spacer(); ui.style(cls).label(cell); }
-          else if (ci === 0 && row.length === 3) ui.style(cls, { width: 32 }).label(cell);
-          else ui.style(cls, { text: { overflow: "ellipsis" } }).label(cell);
+          if (last) { ui.spacer(); ui.style(__l10nStyle(cls)).label(cell); }
+          else if (ci === 0 && row.length === 3) ui.style(__l10nStyle(cls), __l10nStyle({ width: 32 })).label(cell);
+          else ui.style(__l10nStyle(cls), __l10nStyle({ text: { overflow: "ellipsis" } })).label(cell);
         });
       }, {
         width: w, spacing: 12.8, align: "center", padding: { top: 6.4, bottom: 6.4, start: 12.8, end: 12.8 },
@@ -790,7 +809,7 @@ function controlsTable(w: number): void {
   ui.grid("bindings", () => {
     for (const [action, label] of BINDING_LABELS) {
       para(tr(label), w - keyW - 16, "th");
-      ui.row(`keys-${action}`, () => { ui.style("kbd").label(keysOf(action) || "—"); }, { justify: "end", width: keyW });
+      ui.row(`keys-${action}`, () => { ui.style(__l10nStyle("kbd")).label(keysOf(action) || "—"); }, { justify: "end", width: keyW });
     }
   }, { columns: [{ fr: 1 }, { width: keyW, align: "end" }], gap: { row: 8, column: 16 }, width: w });
 }
@@ -828,14 +847,14 @@ function toggle(key: "labelsOnLiquids" | "hintsEnabled" | "leftHanded" | "holdTo
 }
 function optionsNote(w: number, note: string): void {
   para(tr(note), w, "card-dim");
-  button({ id: `btn-options-${note.length}`, text: tr("Open Options"), style: ["btn", "btn-ghost"], act: () => openMenu() });
+  button({ id: `btn-options-${note.length}`, text: tr("Open Options"), style: ["btn", "btn-ghost"], act: () => __l10nOptions() });
 }
 function settingsScreen(L: Layout): void {
   screen("settings", L, 1152, (w) => {
     heading("h1", tr("Settings"), w, "settings-h");
     section("set-audio", N("Audio"), w, (iw) => optionsNote(iw, N("Music, effects and voice volumes and mute are set in the StarHermit Options (F1).")));
     section("set-graphics", N("Graphics"), w, (iw) => {
-      ui.style("field-label").label(tr("Shelf theme"));
+      ui.style(__l10nStyle("field-label")).label(tr("Shelf theme"));
       flow("theme-list", content.THEMES.map((t) => ({
         id: `theme-${t.id}`, text: tr(t.name || t.id), style: ["swatch-option"], selected: settings.theme === t.id,
         act: () => { audio.play("ui"); platform.setSetting("theme", t.id); },
@@ -854,7 +873,7 @@ function settingsScreen(L: Layout): void {
       toggle("holdToConfirm", N("Hold to confirm selection"));
     });
     section("set-a11y", N("Accessibility"), w, (iw) => {
-      ui.style("field-label").label(tr("Color palette"));
+      ui.style(__l10nStyle("field-label")).label(tr("Color palette"));
       const sets = content.COLOR_SETS as Record<string, { hex: string }[]>;
       flow("palette-list", Object.keys(sets).map((key) => ({
         id: `palette-${key}`, text: PALETTE_NAMES[key] ? tr(PALETTE_NAMES[key]!) : key, style: ["swatch-option"], selected: settings.palette === key,
@@ -930,13 +949,13 @@ function progressionScreen(L: Layout): void {
     const panels: ((cw: number) => void)[] = [
       (cw) => {
         heading("h2", tr("Journey"), cw);
-        ui.row("big-journey", () => { ui.style("big-stat").label(`${totalJourneyStars(p)} / ${J.length * 3}`); stars(1, 22, accent); }, { spacing: 8, align: "center" });
+        ui.row("big-journey", () => { ui.style(__l10nStyle("big-stat")).label(`${totalJourneyStars(p)} / ${J.length * 3}`); stars(1, 22, accent); }, { spacing: 8, align: "center" });
         para(tr("{n} of {total} stages harmonized.", { n: Object.keys(p.journey || {}).length, total: J.length }), cw, "body");
         para(next ? tr("Next stage: {name}", { name: levelName(next) }) : tr("Every stage complete. The shelf is yours."), cw, "card-dim");
       },
       (cw) => {
         heading("h2", tr("Mastery track"), cw);
-        ui.row("big-mastery", () => { ui.style("big-stat").label(`${masteryDone.length} / ${masteryStages.length}`); diamond(20, accent); }, { spacing: 8, align: "center" });
+        ui.row("big-mastery", () => { ui.style(__l10nStyle("big-stat")).label(`${masteryDone.length} / ${masteryStages.length}`); diamond(20, accent); }, { spacing: 8, align: "center" });
         para(masteryStages.length ? `${tr("Mastery stages test combined mechanics.")} ${masteryList.length ? tr("{n} recorded on the mastery roll.", { n: masteryList.length }) : tr("None recorded yet.")}` : tr("Mastery stages appear as the journey grows."), cw, "card-dim");
       },
       (cw) => {
@@ -944,7 +963,7 @@ function progressionScreen(L: Layout): void {
         for (const a of storage.ACHIEVEMENTS) {
           const on = !!(p.achievements as Record<string, unknown>)[a.key];
           ui.column(`ach-${a.key}`, () => {
-            ui.style(on ? "ach-name-on" : "ach-name").label(tr(a.name));
+            ui.style(__l10nStyle(on ? "ach-name-on" : "ach-name")).label(tr(a.name));
             para(on ? tr("{desc} (unlocked)", { desc: tr(a.desc) }) : tr(a.desc), cw, "card-dim");
           }, { spacing: 1, ...(on ? {} : { style: "panel-locked" }) });
         }
@@ -1044,13 +1063,13 @@ function countdown(L: Layout): void {
   const opacity = reduced ? 1 : k < 0.35 ? k / 0.35 : 1 - 0.08 * ((k - 0.35) / 0.65);
   const size = Math.max(64, Math.min(L.vw * 18, 144));
   ui.place("countdown", { anchor: "center" }, () => {
-    ui.style("countdown", { text: { size }, scale, opacity, shadow: [] }).id("countdown").label(text);
+    ui.style(__l10nStyle("countdown"), __l10nStyle({ text: { size }, scale, opacity, shadow: [] })).id("countdown").label(text);
   });
 }
 function resolvingPill(L: Layout): void {
   if (app.phase !== "resolving") return;
   void L;
-  ui.place("resolving", { anchor: "bottom", y: 16 }, () => { ui.style("resolving").id("resolving").label(tr("Settling the shelf…")); });
+  ui.place("resolving", { anchor: "bottom", y: 16 }, () => { ui.style(__l10nStyle("resolving")).id("resolving").label(tr("Settling the shelf…")); });
 }
 function errorBanner(L: Layout): void {
   const e = app.error;
@@ -1060,7 +1079,7 @@ function errorBanner(L: Layout): void {
     ui.row("error-row", () => {
       para(tr(ERROR_MESSAGES[e.key] || ERROR_MESSAGES.content!), w - 100, "body", "error-text");
       ui.spacer();
-      if (ui.style("icon-btn").id("btn-error-dismiss").button(tr("Dismiss"), { content: () => ui.label("×") })) app.error = null;
+      if (ui.style(__l10nStyle("icon-btn")).id("btn-error-dismiss").button(tr("Dismiss"), { content: () => ui.label("×") })) app.error = null;
     }, { width: w - 36, spacing: 16, align: "center" });
   }, { style: "error-banner", width: w });
 }
