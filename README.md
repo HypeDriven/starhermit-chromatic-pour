@@ -1,5 +1,7 @@
 # Chromatic Pour
 
+**[▶ Play Chromatic Pour on StarHermit](https://dashboard.starhermit.com/play/932dc6f8-e7f4-4808-b8d6-46a9ce2d2f99)**
+
 An alchemist's liquid-sorting puzzle: pour colored liquids between vessels
 until every vessel holds a single uniform color. Fully deterministic rules
 engine, seeded daily boards, score-chase leaderboards.
