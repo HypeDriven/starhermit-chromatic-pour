@@ -26,6 +26,7 @@ import {
   PerspectiveCamera, PlaneGeometry, PointLight, Points, PointsMaterial, RepeatWrapping, RoomEnvironment, SRGBColorSpace,
   SphereGeometry, Sprite, SpriteMaterial, Vector2, renderer, scene, type Texture,
 } from "starhermit:scene";
+import { GPUParticleEmitter } from "starhermit:particles";
 import { OffscreenCanvas } from "starhermit:canvas";
 import { decorStream } from "../js/rng.js";
 import type { Look } from "./quality.ts";
@@ -355,7 +356,9 @@ function build(): void {
     const flaskRng = rng.fork("flasks");
     const glass = look.budget.material === "lambert"
       ? new MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.3, side: DoubleSide, depthWrite: false })
-      : new MeshStandardMaterial({ color: 0xffffff, roughness: 0.05, metalness: 0, transparent: true, opacity: 0.3, side: DoubleSide, depthWrite: false });
+      : look.budget.material === "physical"
+        ? new MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.05, metalness: 0, transmission: 0.9, thickness: 0.08, ior: 1.45, attenuationColor: 0xd8f0ff, attenuationDistance: 2, side: DoubleSide, depthWrite: false })
+        : new MeshStandardMaterial({ color: 0xffffff, roughness: 0.05, metalness: 0, transparent: true, opacity: 0.3, side: DoubleSide, depthWrite: false });
     envI.set(glass, 0.9);
     const pts: [number, number][] = [];
     for (let i = 0; i <= 10; i++) {
@@ -460,58 +463,18 @@ function updateMotes(tS: number): void {
   moteAttr.needsUpdate = true;
 }
 
-// --- pooled celebration particles ---
-const pPos = new Float32Array(PARTICLE_CAP * 3);
-const pCol = new Float32Array(PARTICLE_CAP * 3);
-const pVel = new Float32Array(PARTICLE_CAP * 3);
-const pLife = new Float32Array(PARTICLE_CAP);
-const pGrav = new Float32Array(PARTICLE_CAP);
-for (let i = 0; i < PARTICLE_CAP; i++) pPos[i * 3 + 1] = -999;
-const pGeo = new BufferGeometry();
-const pPosAttr = new BufferAttribute(pPos, 3);
-const pColAttr = new BufferAttribute(pCol, 3);
-pGeo.setAttribute("position", pPosAttr);
-pGeo.setAttribute("color", pColAttr);
-const sparks = new Points(pGeo, new PointsMaterial({ size: 0.09, map: dotTex, vertexColors: true, transparent: true, opacity: 0.95, depthWrite: false, blending: AdditiveBlending, sizeAttenuation: true }));
+// --- native celebration particles ---
+const sparks = new GPUParticleEmitter({
+  capacity: PARTICLE_CAP, material: new PointsMaterial({ size: 0.09, map: dotTex, transparent: true, opacity: 0.95, depthWrite: false, blending: AdditiveBlending, sizeAttenuation: true }),
+  space: "world", life: [0.5, 1.1], opacity: [0.95, 0],
+});
 sparks.frustumCulled = false;
 scene.add(sparks);
-let pCursor = 0;
-let pAlive = 0;
-const tmpColor = new Color();
-function spawn(x: number, y: number, z: number, vx: number, vy: number, vz: number, life: number, color: string, grav: number): void {
-  if (pAlive >= (look?.budget.particles ?? 0)) return;
-  const i = pCursor;
-  pCursor = (pCursor + 1) % PARTICLE_CAP;
-  pPos[i * 3] = x; pPos[i * 3 + 1] = y; pPos[i * 3 + 2] = z;
-  pVel[i * 3] = vx; pVel[i * 3 + 1] = vy; pVel[i * 3 + 2] = vz;
-  pLife[i] = life; pGrav[i] = grav;
-  tmpColor.set(color);
-  pCol[i * 3] = tmpColor.r; pCol[i * 3 + 1] = tmpColor.g; pCol[i * 3 + 2] = tmpColor.b;
-  pAlive++;
-  pColAttr.needsUpdate = true;
-}
 function burst(x: number, y: number, z: number, color: string, count: number, speed: number, upBias: number, grav: number): void {
-  for (let n = 0; n < count; n++) {
-    const a = fxRng.next() * PI * 2;
-    const r = fxRng.next() * speed;
-    spawn(x, y, z, Math.cos(a) * r, upBias + fxRng.next() * speed, Math.sin(a) * r * 0.6, 0.5 + fxRng.next() * 0.6, color, grav);
-  }
-}
-function updateParticles(dt: number): void {
-  if (pAlive === 0) return;
-  let alive = 0;
-  for (let i = 0; i < PARTICLE_CAP; i++) {
-    if (pLife[i]! <= 0) continue;
-    pLife[i]! -= dt;
-    if (pLife[i]! <= 0) { pPos[i * 3 + 1] = -999; continue; }
-    pVel[i * 3 + 1]! -= pGrav[i]! * dt;
-    pPos[i * 3]! += pVel[i * 3]! * dt;
-    pPos[i * 3 + 1]! += pVel[i * 3 + 1]! * dt;
-    pPos[i * 3 + 2]! += pVel[i * 3 + 2]! * dt;
-    alive++;
-  }
-  pAlive = alive;
-  pPosAttr.needsUpdate = true;
+  const n = Math.min(count, Math.max(0, (look?.budget.particles ?? 0) - sparks.count));
+  if (!n) return;
+  sparks.set({ velocity: [0, upBias, 0], velocitySpread: [speed, speed, speed * 0.6], gravity: [0, -grav, 0] });
+  sparks.burst(n, [x, y, z], { color });
 }
 
 // --- events ---
@@ -662,7 +625,7 @@ export function update(dtIn: number): void {
   const dt = Math.min(0.1, Math.max(0, dtIn));
   if (!reducedMotion) ambMs += dt * 1000;
   stepJob(dt);
-  updateParticles(dt);
+  sparks.paused = reducedMotion;
   const a = ambMs;
   if (flame) {
     const f = 1 + 0.13 * Math.sin(a * 0.013 + flamePhase) + 0.08 * Math.sin(a * 0.0073 + flamePhase * 2);

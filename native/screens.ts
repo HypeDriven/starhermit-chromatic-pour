@@ -152,7 +152,7 @@ function diamond(size: number, color: string): void {
 
 // ------------------------------------------------------------------ the frame
 let topH = 61;
-export function drawScreens(): void {
+function drawScreensImmediate(): void {
   const L = layoutNow();
   const f = frame();
   const playing = app.screen === "play" && !!session;
@@ -1086,3 +1086,10 @@ function errorBanner(L: Layout): void {
 
 // exported for main's Escape on the play screen
 export { cancelOrPause, OK, DANGER, INK_DIM, toast, palette };
+
+export function drawScreens(): void {
+  if (app.screen !== "help") { drawScreensImmediate(); return; }
+  const actions = ["focus_next","focus_prev","focus_up","focus_down","confirm","cancel","pause","undo","hint","restart","camera_reset"];
+  const version = JSON.stringify([(app as any).settings ?? (app as any).options ?? {}, (platform as any).options ?? {}, actions.map((action) => bindings(action))]);
+  ui.retain!("help-screen", version, drawScreensImmediate);
+}
