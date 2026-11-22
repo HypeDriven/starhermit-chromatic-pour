@@ -563,6 +563,7 @@ export function applyLook(next: Look): void {
     vignette: { amount: 0.3, inner: 0.3, outer: 0.85 },
   } : null;
   renderer.antialias = next.antialias;
+  renderer.motionBlur = next.bloom !== null ? { intensity: 0.25, samples: 8, maxPixels: 16, targetFps: 60, camera: false } : null;
   build();
 }
 export function setReducedMotion(on: boolean): void {
