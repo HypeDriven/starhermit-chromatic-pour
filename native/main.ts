@@ -1,3 +1,4 @@
+import { showCursor } from "./cursor.ts";
 import { openLocalizedOptions as openMenu } from "./l10n/menu.ts";
 import { withLanguageRender as __l10nRender } from "./l10n/menu.ts";
 // Chromatic Pour on the StarHermit engine: the entry module (starhermit.txt
@@ -849,6 +850,7 @@ function applyLook(): void {
 }
 
 onStart(() => {
+  showCursor();
   setFixedRate(60);
   initStyles();
   platform.initPlatform();
