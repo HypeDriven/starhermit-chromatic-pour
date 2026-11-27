@@ -2,7 +2,7 @@
 
 **Pitch:** Pour glowing layers of liquid between glass vessels on an alchemist's shelf until every vessel holds a single colour, in as few pours as you can.
 **Genre:** Sorting puzzle (water-sort family) with seeded daily competition. **Players:** 1; asynchronous global/friends score comparison. **Round length:** 1–5 minutes (3 colours ≈ 1 min, 10 colours ≈ 5 min). **Session:** 5–20 minutes.
-**Platforms:** A StarHermit engine script game (engine 1.51.0, host API 1.51): natively in the StarHermit client, and in desktop and mobile browsers through the engine's web runtime; portrait and landscape. **Rendering:** the vessel board is drawn `starhermit:ui` widgets (the playable surface, as the browser build's DOM board was); a `starhermit:scene` shelf draws the environment, lighting and celebrations behind it.
+**Platforms:** A StarHermit engine script game (engine 1.53.0, host API 1.53): natively in the StarHermit client, and in desktop and mobile browsers through the engine's web runtime; portrait and landscape. **Rendering:** the vessel board is drawn `starhermit:ui` widgets (the playable surface, as the browser build's DOM board was); a `starhermit:scene` shelf draws the environment, lighting and celebrations behind it.
 
 This document describes the game as it runs today (present tense). Anything not yet implemented is listed only in §17.
 
@@ -10,7 +10,7 @@ This document describes the game as it runs today (present tense). Anything not 
 
 | Path | Role |
 |---|---|
-| `starhermit.txt` | Manifest: `name=Chromatic Pour`, `launch=index.html`, `engine.entry=native/main.ts`, `engine.version=1.51.0`, `engine.minor=51`, `engine.capabilities=platform,storage,clipboard`, `server=score-script.js`, `cover=cover.jpg`, eleven `control.*` actions with `engine.gamepad.*` defaults and two `engine.group.*` headings. |
+| `starhermit.txt` | Manifest: `name=Chromatic Pour`, `launch=index.html`, `engine.entry=native/main.ts`, `engine.version=1.53.0`, `engine.minor=53`, `engine.capabilities=platform,storage,clipboard`, `server=score-script.js`, `cover=cover.jpg`, eleven `control.*` actions with `engine.gamepad.*` defaults and two `engine.group.*` headings. |
 | `index.html`, `starhermit-files.json` | The engine's web loader and file index, written by `npm run package` (`starhermit package --web .`); never edited by hand. |
 | `native/main.ts` | Entry: the state machine, selection and pour intents with sounds and announcements, the pour lock and Skip, undo, hints, restart, lessons, timed challenges, outcomes, input actions, lifecycle. |
 | `native/screens.ts`, `native/style.ts` | Every screen, HUD, rail, tray, dialog and toast on `starhermit:ui`; styles from `assets/ui-style.json` (converted from `tools/ui-style.css` by `npm run css`) plus per-theme and palette tokens. |
@@ -320,12 +320,14 @@ The string tables include complete regional variants for `fr-BE`, `de-BE`, `en-S
 
 <!-- regional-localization:end -->
 
-## Engine 1.51.0
+## Engine 1.53.0
 
-Browser play uses the StarHermit 1.51.0 web runtime on WebGPU, or WebGL 2 where WebGPU is missing. Automatic ray-traced shadows are enabled on supported Vulkan devices, with mapped-shadow fallbacks elsewhere. Packaging creates block-compressed runtime textures and compressed glTF copies, retaining original image fallbacks.
+Browser play uses the StarHermit 1.53.0 web runtime on WebGPU, or WebGL 2 where WebGPU is missing. Automatic ray-traced shadows are enabled on supported Vulkan devices, with mapped-shadow fallbacks elsewhere. Packaging creates block-compressed runtime textures and compressed glTF copies, retaining original image fallbacks.
 
 The help screen replays through retained native UI while its contents, options, layout and key bindings are unchanged.
 
 Browser rendering uses the engine's asynchronous pipeline creation so newly encountered materials do not stall the page. Native play retains the engine's synchronous pipeline behavior.
 
 Higher graphics tiers use native per-object motion blur for moving pieces and effects. Camera motion stays sharp, lower tiers omit the effect, and the runtime's Motion blur and Reduce motion preferences remain authoritative.
+
+On engine 1.53.0, browser play through WebGL 2 compiles a frame's shader programs together and holds that frame until they are linked, blends skinned meshes in one pass, reuses the window pass's depth, and uses a hardware WebGL 2 context when WebGPU's adapter is software.
