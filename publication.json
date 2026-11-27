@@ -12,7 +12,7 @@
     "metadataSource": "starhermit.txt",
     "createdAt": "2026-09-01T07:00:58.967453+00:00",
     "coverArtSource": "manifest",
-    "coverArtUpdatedAt": "2026-11-26T20:08:03.69548+00:00",
+    "coverArtUpdatedAt": "2026-11-27T17:04:44.137534+00:00",
     "submittedByUserId": "2712e04e-461b-4d23-81ae-e40b429128a8",
     "submittedByUsername": "starhermit",
     "hosting": {
@@ -22,9 +22,9 @@
       "pinnedCommitSha": null,
       "deployedCommitSha": null,
       "deployError": null,
-      "deployedAt": "2026-11-26T20:08:03.684357+00:00",
+      "deployedAt": "2026-11-27T17:04:44.125663+00:00",
       "externalLaunchUrl": null,
-      "engineVersion": "1.51.0",
+      "engineVersion": "1.53.0",
       "deployWarning": null
     },
     "description": "Pour colored liquids between glass vessels until each holds a single color, using as few moves as possible.",
@@ -36,19 +36,19 @@
     "links": [],
     "isDisabled": false
   },
-  "publishedAt": "2026-11-26T20:08:03.792Z",
-  "sourceCommit": "0427e3a4dc9968b0a9eb2dcdd39c92b9246b1d5b",
-  "bytesReceived": 3660970,
-  "archiveSha256": "6ad80adaabab618cca861e83a9329e6024680eeec20498541a974f6062384379",
+  "publishedAt": "2026-11-27T17:04:44.291Z",
+  "sourceCommit": "e99d2ae6879ed07feb5ada056bd9d40b269bce10",
+  "bytesReceived": 3660925,
+  "archiveSha256": "0c4313b2ac56ccc65ba6a87a73fda1155305da10ff03944c64dc8df105a538e4",
   "indexSha256": "e7e6772f79ac1204c9aa2b744f6c56471e6680cc855befea1cd5be3a8d896929",
   "result": {
     "clientPublished": true,
     "serverImageLoaded": false,
     "imageDigest": null,
-    "bytesReceived": 3660970,
+    "bytesReceived": 3660925,
     "mode": "replace",
     "filesRemoved": 0,
-    "engineVersion": "1.51.0",
+    "engineVersion": "1.53.0",
     "deployWarning": null
   },
   "liveVerification": {
